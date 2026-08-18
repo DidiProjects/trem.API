@@ -87,7 +87,7 @@ jobs:
           sudo docker run -d --name trem-api \
             --label app=trem-api \
             --label project=trem \
-            -p 0.0.0.0:${{ vars.API_PORT }}:${{ vars.CONTAINER_PORT }} \
+            -p 127.0.0.1:1${{ vars.API_PORT }}:${{ vars.CONTAINER_PORT }} \
             --restart=unless-stopped \
             --network=bridge \
             -e API_PORT="${{ vars.API_PORT }}" \
