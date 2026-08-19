@@ -119,6 +119,50 @@ class UserModel(Base):
         )
 
 
+class ApiClientModel(Base):
+    """
+    Aplicação consumidora autenticada por API key.
+
+    `key_hash` é SHA-256 da chave completa, e não Argon2id: a chave é gerada
+    com 256 bits de entropia, então não há ataque de dicionário a mitigar, e o
+    hash sem salt permite buscar o cliente por índice em vez de varrer a tabela
+    verificando um a um a cada request.
+    """
+
+    __tablename__ = "api_clients"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    name: Mapped[str] = mapped_column(
+        String(100), unique=True, nullable=False, index=True
+    )
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    key_hash: Mapped[str] = mapped_column(
+        String(64), unique=True, nullable=False, index=True
+    )
+    profile_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("profiles.id"), nullable=False
+    )
+    revoked: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false", index=True
+    )
+    last_used_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, default=_now, server_default=func.now()
+    )
+
+    profile: Mapped["ProfileModel"] = relationship("ProfileModel")
+
+    def __repr__(self) -> str:  # sem key_hash — é material sensível
+        return (
+            f"ApiClientModel(id={self.id!r}, name={self.name!r}, "
+            f"revoked={self.revoked!r})"
+        )
+
+
 class RefreshTokenModel(Base):
     __tablename__ = "refresh_tokens"
     __table_args__ = (

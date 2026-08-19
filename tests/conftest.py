@@ -69,7 +69,10 @@ from app.core.config import get_settings  # noqa: E402
 get_settings.cache_clear()
 
 from app.main import app  # noqa: E402
-from app.api.v1.dependencies import get_current_user  # noqa: E402
+from app.api.v1.dependencies import (  # noqa: E402
+    authenticated_user_or_none,
+    get_current_user,
+)
 from app.domain.entities.profile import ProfileName  # noqa: E402
 from app.domain.entities.user import User, UserStatus  # noqa: E402
 from app.infrastructure.database.connection import get_db  # noqa: E402
@@ -199,30 +202,37 @@ async def _user_airline():
 # Fixtures de client HTTP
 # ---------------------------------------------------------------------------
 
+def _authenticated_as(user_factory):
+    """
+    Monta um TestClient autenticado substituindo apenas a *resolução* do
+    usuário. As regras de perfil e de senha pendente continuam sendo aplicadas
+    pelo get_current_principal real — é o que mantém os testes de 403
+    verificando a aplicação, e não o fixture.
+    """
+    app.dependency_overrides[get_current_user] = user_factory
+    app.dependency_overrides[authenticated_user_or_none] = user_factory
+    app.dependency_overrides[get_db] = mock_get_db
+    return TestClient(app)
+
+
 @pytest.fixture
 def client():
     """Client autenticado como file_editor (para testes de routers de arquivo)."""
-    app.dependency_overrides[get_current_user] = _user_file_editor
-    app.dependency_overrides[get_db] = mock_get_db
-    yield TestClient(app)
+    yield _authenticated_as(_user_file_editor)
     app.dependency_overrides.clear()
 
 
 @pytest.fixture
 def client_must_change():
     """Client autenticado, mas com must_change_password=True."""
-    app.dependency_overrides[get_current_user] = _user_must_change
-    app.dependency_overrides[get_db] = mock_get_db
-    yield TestClient(app)
+    yield _authenticated_as(_user_must_change)
     app.dependency_overrides.clear()
 
 
 @pytest.fixture
 def client_airline():
     """Client autenticado com perfil airline_company."""
-    app.dependency_overrides[get_current_user] = _user_airline
-    app.dependency_overrides[get_db] = mock_get_db
-    yield TestClient(app)
+    yield _authenticated_as(_user_airline)
     app.dependency_overrides.clear()
 
 

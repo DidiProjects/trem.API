@@ -15,6 +15,7 @@ from app.api.v1.dependencies import (
     get_current_user,
     require_profile,
 )
+from app.domain.entities.api_client import Principal
 from app.core.security import create_access_token, create_refresh_token
 from app.domain.entities.profile import ProfileName
 from app.domain.entities.user import User, UserStatus
@@ -37,13 +38,15 @@ def probe_app():
     async def active(user: User = Depends(get_current_active_user)):
         return {"username": user.username}
 
+    # require_profile devolve um Principal (usuário OU cliente de API),
+    # por isso a identidade aqui é display_name e não username.
     @api.get("/editor")
-    async def editor(user: User = Depends(require_profile("file_editor"))):
-        return {"username": user.username}
+    async def editor(principal: Principal = Depends(require_profile("file_editor"))):
+        return {"username": principal.display_name}
 
     @api.get("/airline")
-    async def airline(user: User = Depends(require_profile("airline_company"))):
-        return {"username": user.username}
+    async def airline(principal: Principal = Depends(require_profile("airline_company"))):
+        return {"username": principal.display_name}
 
     api.dependency_overrides[get_db] = mock_get_db
     return api
