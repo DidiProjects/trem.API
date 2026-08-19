@@ -193,19 +193,10 @@ class TestPdfRoutesAuth:
         )
         assert response.status_code == 403
 
-    def test_wrong_profile_returns_403(self, sample_pdf_bytes):
+    def test_wrong_profile_returns_403(self, client_airline, sample_pdf_bytes):
         """Usuário com perfil airline_company não pode acessar endpoints de arquivo."""
-        async def _airline_user():
-            return make_mock_user("airline_company")
-
-        app.dependency_overrides[get_current_user] = _airline_user
-        app.dependency_overrides[get_db] = mock_get_db
-        try:
-            with TestClient(app) as c:
-                response = c.post(
-                    "/pdf/info",
-                    files={"file": ("test.pdf", io.BytesIO(sample_pdf_bytes), "application/pdf")},
-                )
-            assert response.status_code == 403
-        finally:
-            app.dependency_overrides.clear()
+        response = client_airline.post(
+            "/pdf/info",
+            files={"file": ("test.pdf", io.BytesIO(sample_pdf_bytes), "application/pdf")},
+        )
+        assert response.status_code == 403

@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, Form, HTTPException
 from fastapi.responses import JSONResponse
 from typing import Optional
-from app.api.v1.dependencies import get_current_active_user
-from app.domain.entities.user import User
+from app.api.v1.dependencies import get_current_principal
+from app.domain.entities.api_client import Principal
 from app.services.emailService import send_feedback_email, EmailServiceError
 
 router = APIRouter()
@@ -13,7 +13,7 @@ async def send_feedback(
     type: str = Form(...),
     message: str = Form(...),
     email: Optional[str] = Form(None),
-    _: User = Depends(get_current_active_user)
+    _: Principal = Depends(get_current_principal)
 ):
     """
     Enviar feedback, sugestão ou reporte de bug.

@@ -4,7 +4,7 @@ from starlette.background import BackgroundTask
 import tempfile
 import os
 from app.api.v1.dependencies import require_profile
-from app.domain.entities.user import User
+from app.domain.entities.api_client import Principal
 from app.services.videoService import cut_video, validate_cut_input, VideoServiceError
 from app.services.audioService import transcribe, validate_transcription_input, AudioServiceError
 
@@ -26,7 +26,7 @@ async def movie_cut(
     file: UploadFile = File(...),
     start: float = Form(...),
     end: float = Form(...),
-    _: User = Depends(require_profile("file_editor"))
+    _: Principal = Depends(require_profile("file_editor"))
 ):
     """
     Recorta um vídeo entre os tempos definidos.
@@ -69,7 +69,7 @@ async def movie_cut(
 async def movie_transcribe(
     file: UploadFile = File(...),
     language: str = Form(None),
-    _: User = Depends(require_profile("file_editor"))
+    _: Principal = Depends(require_profile("file_editor"))
 ):
     """
     Transcreve o áudio de um vídeo para texto.

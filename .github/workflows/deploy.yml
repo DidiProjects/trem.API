@@ -87,18 +87,64 @@ jobs:
           ssh -o StrictHostKeyChecking=no -p 1024 diego@${{ vars.TAILSCALE_IP }} << EOF
           
           echo "${{ secrets.GITHUB_TOKEN }}" | sudo docker login ghcr.io -u ${{ github.actor }} --password-stdin
-          
+
           sudo docker pull ghcr.io/${REPO_LOWER}:latest
-          
+
+          # ── Rede e Postgres ────────────────────────────────────────────
+          # A API precisa do banco para autenticar clientes e usuarios. A rede
+          # dedicada permite que a API alcance o banco por nome (trem-postgres)
+          # sem expor a porta 5432 no host.
+          sudo docker network inspect trem-network >/dev/null 2>&1 || \
+            sudo docker network create trem-network
+
+          if ! sudo docker ps -a --format '{{.Names}}' | grep -q '^trem-postgres$'; then
+            sudo docker run -d --name trem-postgres \
+              --label project=trem \
+              --network=trem-network \
+              --restart=unless-stopped \
+              -e POSTGRES_DB=trem \
+              -e POSTGRES_USER=trem \
+              -e POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}" \
+              -v trem_postgres_data:/var/lib/postgresql/data \
+              postgres:16-alpine
+          else
+            sudo docker start trem-postgres || true
+          fi
+
+          echo "Aguardando o Postgres aceitar conexoes..."
+          for i in \$(seq 1 30); do
+            if sudo docker exec trem-postgres pg_isready -U trem -d trem >/dev/null 2>&1; then
+              echo "Postgres pronto"
+              break
+            fi
+            [ \$i -eq 30 ] && { echo "Postgres nao subiu a tempo"; exit 1; }
+            sleep 2
+          done
+
           sudo docker stop trem-api || true
           sudo docker rm trem-api || true
-          
+
+          DB_URL="postgresql+asyncpg://trem:${{ secrets.POSTGRES_PASSWORD }}@trem-postgres:5432/trem"
+
+          # ── Migrations ─────────────────────────────────────────────────
+          # Roda antes de subir a API: se o schema falhar, o deploy para aqui
+          # e o container antigo nao e substituido por um quebrado.
+          echo "Aplicando migrations..."
+          sudo docker run --rm \
+            --network=trem-network \
+            -e DATABASE_URL="\${DB_URL}" \
+            ghcr.io/${REPO_LOWER}:latest \
+            alembic upgrade head
+
           sudo docker run -d --name trem-api \
             --label app=trem-api \
             --label project=trem \
             -p 127.0.0.1:1${{ vars.API_PORT }}:${{ vars.CONTAINER_PORT }} \
             --restart=unless-stopped \
-            --network=bridge \
+            --network=trem-network \
+            -e DATABASE_URL="\${DB_URL}" \
+            -e JWT_PRIVATE_KEY="${{ secrets.JWT_PRIVATE_KEY }}" \
+            -e JWT_PUBLIC_KEY="${{ secrets.JWT_PUBLIC_KEY }}" \
             -e API_PORT="${{ vars.API_PORT }}" \
             -e API_URL="${{ vars.API_URL }}" \
             -e API_KEY="${{ secrets.API_KEY }}" \

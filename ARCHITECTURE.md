@@ -162,7 +162,54 @@ INSERT INTO profiles (name, description) VALUES
 
 ---
 
-## Autenticação — Bearer Token JWT (RS256 + Argon2id)
+## Autenticação — dois esquemas, uma autorização
+
+A API é consumida por **aplicações** (outras APIs, scripts, o playground) e,
+futuramente, por **usuários humanos** num front-end. Os dois obtêm credenciais
+de formas diferentes, mas passam pela mesma checagem de perfil.
+
+| Chamador | Credencial | Header |
+|----------|-----------|--------|
+| Aplicação | API key por cliente | `X-API-Key: trem_...` |
+| Usuário | JWT RS256 | `Authorization: Bearer ...` |
+| Administrador | master key | `X-API-Key: <API_KEY>` |
+
+As duas primeiras são normalizadas em um `Principal` (`app/domain/entities/api_client.py`),
+que é o que `require_profile()` inspeciona. As rotas não sabem — nem precisam
+saber — qual esquema foi usado.
+
+A **master key** (`settings.API_KEY`) é a exceção: serve só para administrar
+credenciais em `/admin/clients` e `/users`. Ela não autentica rotas de negócio.
+
+### API keys por cliente
+
+Cada aplicação consumidora tem a sua chave, com perfil e revogação próprios
+(tabela `api_clients`). Isso substitui a chave única compartilhada, que não
+permitia revogar um consumidor sem derrubar todos nem saber quem chamou o quê.
+
+- Chave gerada com 256 bits de entropia, prefixada com `trem_`
+- Armazenada como **SHA-256**, não Argon2id — a chave é aleatória, então não há
+  dicionário a encarecer, e o hash determinístico é o que permite localizar o
+  cliente por índice em vez de varrer a tabela a cada request
+- Devolvida em claro **uma única vez**, na criação
+- `last_used_at` registra o uso, para auditoria e detecção de chaves esquecidas
+
+```bash
+# Bootstrap (primeiro cliente, antes de existir chave para chamar a API)
+python -m scripts.manage_api_clients create flight-api --profile airline_company
+python -m scripts.manage_api_clients list
+python -m scripts.manage_api_clients revoke <client_id>
+```
+
+### Precedência
+
+Quando as duas credenciais chegam juntas, a **API key vence** e o Bearer é
+ignorado — inclusive se estiver inválido. Sem isso, um header `Authorization`
+velho deixado pelo browser derrubaria com 401 uma chamada legítima por chave.
+
+---
+
+## Autenticação de usuários — JWT (RS256 + Argon2id)
 
 ### Tecnologias
 

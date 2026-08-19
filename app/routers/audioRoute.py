@@ -4,7 +4,7 @@ from starlette.background import BackgroundTask
 import tempfile
 import os
 from app.api.v1.dependencies import require_profile
-from app.domain.entities.user import User
+from app.domain.entities.api_client import Principal
 from app.services.audioService import (
     transcribe,
     validate_transcription_input,
@@ -32,7 +32,7 @@ async def audio_cut(
     file: UploadFile = File(...),
     start: float = Form(...),
     end: float = Form(...),
-    _: User = Depends(require_profile("file_editor"))
+    _: Principal = Depends(require_profile("file_editor"))
 ):
     """
     Recorta um áudio entre os tempos definidos.
@@ -86,7 +86,7 @@ async def audio_cut(
 async def audio_transcribe(
     file: UploadFile = File(...),
     language: str = Form(None),
-    _: User = Depends(require_profile("file_editor"))
+    _: Principal = Depends(require_profile("file_editor"))
 ):
     """
     Transcreve o áudio de um arquivo de vídeo ou áudio.

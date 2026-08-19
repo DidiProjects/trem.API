@@ -44,7 +44,12 @@
       "Bash(docker exec *)",
       "Bash(./.venv/Scripts/python.exe -m pip show moviepy)",
       "Bash(./.venv/Scripts/python.exe -c \"import moviepy; print\\('__version__ reporta:', moviepy.__version__\\)\")",
-      "Bash(gh auth *)"
+      "Bash(gh auth *)",
+      "Bash(./.venv/Scripts/python.exe -m pytest tests/test_dependencies.py::TestRequireProfile::test_matching_profile_is_allowed -q --no-header)",
+      "Bash(./.venv/Scripts/python.exe -m pytest tests/test_api_clients.py -q --no-header)",
+      "Bash(export DATABASE_URL=\"postgresql+asyncpg://trem:verify@localhost:55439/trem\")",
+      "Bash(PYTHONPATH=. ./.venv/Scripts/python.exe -m scripts.manage_api_clients create playground --profile file_editor)",
+      "Bash(PYTHONPATH=. ./.venv/Scripts/python.exe -m scripts.manage_api_clients list)"
     ]
   }
 }

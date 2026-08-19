@@ -34,7 +34,12 @@ def _user(profile_id, username="alguem", **kwargs):
 
 class TestMetadata:
     def test_declares_expected_tables(self):
-        assert set(Base.metadata.tables) == {"profiles", "users", "refresh_tokens"}
+        assert set(Base.metadata.tables) == {
+            "profiles",
+            "users",
+            "refresh_tokens",
+            "api_clients",
+        }
 
     def test_refresh_token_indexes_are_declared(self):
         indexes = {i.name for i in Base.metadata.tables["refresh_tokens"].indexes}

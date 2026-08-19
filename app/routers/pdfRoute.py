@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 import pikepdf
 from app.api.v1.dependencies import require_profile
-from app.domain.entities.user import User
+from app.domain.entities.api_client import Principal
 from app.services import PdfService
 from app.utils import safe_filename, get_output_filename
 from app.utils.security import validate_pdf_upload, sanitize_filename
@@ -16,7 +16,7 @@ router = APIRouter()
 async def split_pdf(
     file: UploadFile = File(...),
     pages: str = Form(...),
-    _: User = Depends(require_profile("file_editor"))
+    _: Principal = Depends(require_profile("file_editor"))
 ):
     content = await validate_pdf_upload(file)
     
@@ -35,7 +35,7 @@ async def split_pdf(
 @router.post("/extract-pages")
 async def extract_pages(
     file: UploadFile = File(...),
-    _: User = Depends(require_profile("file_editor"))
+    _: Principal = Depends(require_profile("file_editor"))
 ):
     content = await validate_pdf_upload(file)
     
@@ -55,7 +55,7 @@ async def extract_pages(
 @router.post("/merge")
 async def merge_pdfs(
     files: List[UploadFile] = File(...),
-    _: User = Depends(require_profile("file_editor"))
+    _: Principal = Depends(require_profile("file_editor"))
 ):
     if len(files) < 2:
         raise HTTPException(status_code=400, detail="Provide at least 2 PDF files")
@@ -86,7 +86,7 @@ async def add_password(
     file: UploadFile = File(...),
     user_password: str = Form(...),
     owner_password: Optional[str] = Form(None),
-    _: User = Depends(require_profile("file_editor"))
+    _: Principal = Depends(require_profile("file_editor"))
 ):
     content = await validate_pdf_upload(file)
     
@@ -106,7 +106,7 @@ async def add_password(
 async def remove_password(
     file: UploadFile = File(...),
     password: str = Form(...),
-    _: User = Depends(require_profile("file_editor"))
+    _: Principal = Depends(require_profile("file_editor"))
 ):
     content = await validate_pdf_upload(file)
     
@@ -127,7 +127,7 @@ async def remove_password(
 @router.post("/info")
 async def pdf_info(
     file: UploadFile = File(...),
-    _: User = Depends(require_profile("file_editor"))
+    _: Principal = Depends(require_profile("file_editor"))
 ):
     content = await validate_pdf_upload(file)
     
@@ -143,7 +143,7 @@ async def convert_to_image(
     format: Literal["png", "jpeg", "tiff"] = Form("png"),
     dpi: int = Form(150),
     pages: Optional[str] = Form(None),
-    _: User = Depends(require_profile("file_editor"))
+    _: Principal = Depends(require_profile("file_editor"))
 ):
     if dpi < 72 or dpi > 600:
         raise HTTPException(status_code=400, detail="DPI must be between 72 and 600")
@@ -174,7 +174,7 @@ async def convert_to_ofx(
     bank_id: str = Form("0000"),
     account_id: str = Form("0000000000"),
     account_type: Literal["CHECKING", "SAVINGS", "CREDITCARD"] = Form("CHECKING"),
-    _: User = Depends(require_profile("file_editor"))
+    _: Principal = Depends(require_profile("file_editor"))
 ):
     content = await validate_pdf_upload(file)
     
@@ -200,7 +200,7 @@ async def convert_to_ofx(
 @router.post("/extract-text")
 async def extract_text(
     file: UploadFile = File(...),
-    _: User = Depends(require_profile("file_editor"))
+    _: Principal = Depends(require_profile("file_editor"))
 ):
     content = await validate_pdf_upload(file)
     

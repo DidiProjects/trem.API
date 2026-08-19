@@ -7,6 +7,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from app.api.v1.routers import api_clients as api_clients_router
 from app.api.v1.routers import auth as auth_router
 from app.api.v1.routers import users as users_router
 from app.core.config import get_settings
@@ -58,6 +59,7 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 # --- Routers v1: autenticação e gestão de usuários ---
 app.include_router(auth_router.router)
 app.include_router(users_router.router)
+app.include_router(api_clients_router.router)
 
 # --- Routers de processamento de arquivos (mantidos) ---
 app.include_router(pdfRoute.router, prefix="/pdf", tags=["PDF"])
