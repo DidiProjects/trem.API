@@ -1,49 +1,41 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, field_validator
-import re
+
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+
+from app.domain.entities.profile import ProfileName
+from app.domain.entities.user import UserStatus
+
+USERNAME_PATTERN = r"^[a-zA-Z0-9_.-]+$"
 
 
 class UserCreate(BaseModel):
-    username: str
-    email: Optional[str] = None
-    profile_name: str  # 'file_editor' | 'airline_company'
+    model_config = ConfigDict(str_strip_whitespace=True)
 
-    @field_validator("username")
-    @classmethod
-    def username_format(cls, v: str) -> str:
-        v = v.strip()
-        if len(v) < 3 or len(v) > 50:
-            raise ValueError("Username deve ter entre 3 e 50 caracteres")
-        if not re.match(r"^[a-zA-Z0-9_.-]+$", v):
-            raise ValueError("Username só pode conter letras, números, _, . e -")
-        return v
+    username: str = Field(
+        min_length=3,
+        max_length=50,
+        pattern=USERNAME_PATTERN,
+        description="Letras, números, _, . e -",
+    )
+    email: Optional[EmailStr] = None
+    profile_name: ProfileName
 
     @field_validator("email")
     @classmethod
-    def email_format(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return v
-        v = v.strip().lower()
-        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", v):
-            raise ValueError("Email inválido")
-        return v
-
-    @field_validator("profile_name")
-    @classmethod
-    def valid_profile(cls, v: str) -> str:
-        allowed = {"file_editor", "airline_company"}
-        if v not in allowed:
-            raise ValueError(f"Perfil deve ser um de: {', '.join(allowed)}")
-        return v
+    def normalize_email(cls, v: Optional[str]) -> Optional[str]:
+        return v.lower() if v else None
 
 
 class UserResponse(BaseModel):
+    # from_attributes permite UserResponse.model_validate(user_entity)
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     username: str
     email: Optional[str]
     profile_name: str
-    status: str
+    status: UserStatus
     must_change_password: bool
     provisional_password_sent_at: Optional[datetime]
     created_at: datetime

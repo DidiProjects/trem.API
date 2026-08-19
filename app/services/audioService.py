@@ -1,7 +1,6 @@
-import whisper
 import os
 import tempfile
-from moviepy.editor import VideoFileClip, AudioFileClip
+from moviepy import VideoFileClip, AudioFileClip
 
 _whisper_model = None
 
@@ -21,9 +20,16 @@ class AudioServiceError(Exception):
 
 
 def get_whisper_model():
-    """Carrega o modelo Whisper de forma lazy"""
+    """
+    Carrega o modelo Whisper de forma lazy.
+
+    O import de `whisper` também é lazy: ele arrasta o torch (~centenas de MB),
+    que só é necessário na transcrição — não no boot da API nem nos testes.
+    """
     global _whisper_model
     if _whisper_model is None:
+        import whisper
+
         _whisper_model = whisper.load_model("base")
     return _whisper_model
 
@@ -91,7 +97,7 @@ def cut_audio(input_path: str, start: float, end: float, output_path: str) -> st
                 f"Tempo inicial ({start}s) excede a duração do áudio ({clip.duration:.2f}s)"
             )
         
-        subclip = clip.subclip(start, end)
+        subclip = clip.subclipped(start, end)
         subclip.write_audiofile(output_path, logger=None)
         return output_path
     
@@ -176,14 +182,16 @@ def transcribe(input_path: str, language: str = None) -> dict:
                 import wave
                 with wave.open(input_path, 'rb') as audio:
                     duration = audio.getnframes() / audio.getframerate()
-            except:
+            except Exception:
+                audio_clip = None
                 try:
-                    from moviepy.editor import AudioFileClip
                     audio_clip = AudioFileClip(input_path)
                     duration = audio_clip.duration
-                    audio_clip.close()
-                except:
+                except Exception:
                     duration = None
+                finally:
+                    if audio_clip:
+                        audio_clip.close()
         
         model = get_whisper_model()
         

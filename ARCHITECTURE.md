@@ -170,7 +170,7 @@ INSERT INTO profiles (name, description) VALUES
 |-----------------|--------------------|-----------------------------------------------------|
 | Hash de senha   | **Argon2id**       | Vencedor do PHC, recomendado pelo OWASP             |
 | Algoritmo JWT   | **RS256**          | Assimétrico: outros serviços verificam sem a chave privada |
-| Biblioteca JWT  | **python-jose**    | Open-source, suporte completo a RS256               |
+| Biblioteca JWT  | **PyJWT**          | Mantida ativamente, RS256 completo; substituiu python-jose (semi-abandonada, CVE-2024-33663/33664) |
 | Hash de refresh token | SHA-256 | Token raw não fica no banco                    |
 
 ### Parâmetros Argon2id (OWASP recomendado)
@@ -358,7 +358,7 @@ services:
 | ORM + Async         | SQLAlchemy 2.x async  |
 | Migrações           | Alembic               |
 | Hash de senha       | argon2-cffi (Argon2id)|
-| JWT                 | python-jose[cryptography] |
+| JWT                 | PyJWT[crypto]         |
 | Config segura       | pydantic-settings     |
 | Cliente HTTP        | httpx                 |
 | DB admin web        | Adminer (Docker)      |

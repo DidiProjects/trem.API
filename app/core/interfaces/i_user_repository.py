@@ -50,6 +50,10 @@ class IUserRepository(ABC):
     async def list_all(self, limit: int = 50, offset: int = 0) -> list[User]:
         ...
 
+    @abstractmethod
+    async def count_all(self) -> int:
+        ...
+
     # --- Refresh tokens ---
 
     @abstractmethod

@@ -23,6 +23,11 @@ wheels/
 env/
 venv/
 ENV/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
 .idea/
 .vscode/
 *.swp

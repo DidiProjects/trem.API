@@ -70,5 +70,10 @@ class UserService:
             raise UserNotFoundError()
         return user
 
-    async def list_users(self, limit: int = 50, offset: int = 0) -> list[User]:
-        return await self._repo.list_all(limit=limit, offset=offset)
+    async def list_users(
+        self, limit: int = 50, offset: int = 0
+    ) -> tuple[list[User], int]:
+        """Retorna (página de usuários, total de registros na tabela)."""
+        users = await self._repo.list_all(limit=limit, offset=offset)
+        total = await self._repo.count_all()
+        return users, total

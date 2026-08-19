@@ -153,7 +153,7 @@ class TestListUsers:
     def test_list_users_success(self, admin_client):
         users = [_make_user(f"user{i}") for i in range(3)]
         with patch("app.api.v1.routers.users.UserService") as Mock:
-            Mock.return_value.list_users = AsyncMock(return_value=users)
+            Mock.return_value.list_users = AsyncMock(return_value=(users, 3))
             response = admin_client.get("/users")
         assert response.status_code == 200
         data = response.json()
@@ -163,19 +163,37 @@ class TestListUsers:
 
     def test_list_users_empty(self, admin_client):
         with patch("app.api.v1.routers.users.UserService") as Mock:
-            Mock.return_value.list_users = AsyncMock(return_value=[])
+            Mock.return_value.list_users = AsyncMock(return_value=([], 0))
             response = admin_client.get("/users")
         assert response.status_code == 200
         assert response.json()["total"] == 0
 
     def test_list_users_pagination(self, admin_client):
         with patch("app.api.v1.routers.users.UserService") as Mock:
-            Mock.return_value.list_users = AsyncMock(return_value=[])
+            Mock.return_value.list_users = AsyncMock(return_value=([], 0))
             response = admin_client.get("/users?limit=10&offset=20")
         assert response.status_code == 200
         data = response.json()
         assert data["limit"] == 10
         assert data["offset"] == 20
+
+    def test_list_users_total_is_table_count_not_page_size(self, admin_client):
+        """total precisa refletir a tabela inteira, não o tamanho da página."""
+        page = [_make_user(f"user{i}") for i in range(2)]
+        with patch("app.api.v1.routers.users.UserService") as Mock:
+            Mock.return_value.list_users = AsyncMock(return_value=(page, 57))
+            response = admin_client.get("/users?limit=2&offset=0")
+        data = response.json()
+        assert len(data["items"]) == 2
+        assert data["total"] == 57
+        assert data["has_more"] is True
+
+    def test_list_users_has_more_false_on_last_page(self, admin_client):
+        page = [_make_user("user0")]
+        with patch("app.api.v1.routers.users.UserService") as Mock:
+            Mock.return_value.list_users = AsyncMock(return_value=(page, 3))
+            response = admin_client.get("/users?limit=2&offset=2")
+        assert response.json()["has_more"] is False
 
     def test_list_users_no_api_key(self, no_auth_client):
         response = no_auth_client.get("/users")

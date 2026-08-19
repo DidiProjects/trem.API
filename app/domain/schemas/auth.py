@@ -1,16 +1,15 @@
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+# Regras de senha aplicadas na troca de senha (login não valida força — só compara)
+PASSWORD_MIN_LENGTH = 8
+PASSWORD_MAX_LENGTH = 128
 
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    model_config = ConfigDict(str_strip_whitespace=True)
 
-    @field_validator("username", "password")
-    @classmethod
-    def not_empty(cls, v: str) -> str:
-        if not v or not v.strip():
-            raise ValueError("Campo obrigatório")
-        return v.strip()
+    username: str = Field(min_length=1, max_length=100)
+    password: str = Field(min_length=1, max_length=PASSWORD_MAX_LENGTH)
 
 
 class TokenResponse(BaseModel):
@@ -21,7 +20,9 @@ class TokenResponse(BaseModel):
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    refresh_token: str = Field(min_length=1)
 
 
 class AccessTokenResponse(BaseModel):
@@ -30,18 +31,28 @@ class AccessTokenResponse(BaseModel):
 
 
 class ChangePasswordRequest(BaseModel):
-    current_password: str
-    new_password: str
+    current_password: str = Field(min_length=1, max_length=PASSWORD_MAX_LENGTH)
+    new_password: str = Field(min_length=1, max_length=PASSWORD_MAX_LENGTH)
 
     @field_validator("new_password")
     @classmethod
     def password_strength(cls, v: str) -> str:
-        if len(v) < 8:
-            raise ValueError("A nova senha deve ter no mínimo 8 caracteres")
+        if len(v) < PASSWORD_MIN_LENGTH:
+            raise ValueError(
+                f"A nova senha deve ter no mínimo {PASSWORD_MIN_LENGTH} caracteres"
+            )
         if not any(c.isupper() for c in v):
             raise ValueError("A nova senha deve conter ao menos uma letra maiúscula")
         if not any(c.islower() for c in v):
             raise ValueError("A nova senha deve conter ao menos uma letra minúscula")
         if not any(c.isdigit() for c in v):
             raise ValueError("A nova senha deve conter ao menos um número")
+        return v
+
+    @field_validator("new_password")
+    @classmethod
+    def differs_from_current(cls, v: str, info) -> str:
+        current = info.data.get("current_password")
+        if current is not None and v == current:
+            raise ValueError("A nova senha deve ser diferente da atual")
         return v

@@ -12,17 +12,7 @@ router = APIRouter(prefix="/users", tags=["Users"])
 
 
 def _to_response(user) -> UserResponse:
-    return UserResponse(
-        id=user.id,
-        username=user.username,
-        email=user.email,
-        profile_name=user.profile_name,
-        status=user.status,
-        must_change_password=user.must_change_password,
-        provisional_password_sent_at=user.provisional_password_sent_at,
-        created_at=user.created_at,
-        last_login_at=user.last_login_at,
-    )
+    return UserResponse.model_validate(user)
 
 
 @router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
@@ -47,10 +37,10 @@ async def list_users(
     _: str = Depends(verify_api_key),
 ):
     service = UserService(db)
-    users = await service.list_users(limit=limit, offset=offset)
+    users, total = await service.list_users(limit=limit, offset=offset)
     return PaginatedResponse(
         items=[_to_response(u) for u in users],
-        total=len(users),
+        total=total,
         limit=limit,
         offset=offset,
     )

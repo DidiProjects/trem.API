@@ -1,7 +1,8 @@
+import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Union
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -9,6 +10,21 @@ from app.core.interfaces.i_user_repository import IUserRepository
 from app.domain.entities.user import User
 from app.infrastructure.database.models import ProfileModel, RefreshTokenModel, UserModel
 from app.repositories.base import BaseRepository
+
+
+def _as_uuid(value: Union[str, uuid.UUID, None]) -> Optional[uuid.UUID]:
+    """
+    Converte o id textual usado nas camadas superiores em uuid.UUID.
+
+    Retorna None quando a string não é um UUID válido — assim um id malformado
+    vindo da URL vira "não encontrado" (404) em vez de erro de driver (500).
+    """
+    if value is None or isinstance(value, uuid.UUID):
+        return value
+    try:
+        return uuid.UUID(str(value))
+    except (ValueError, AttributeError, TypeError):
+        return None
 
 
 def _to_entity(orm: UserModel) -> User:
@@ -34,10 +50,13 @@ class UserRepository(BaseRepository, IUserRepository):
         super().__init__(session)
 
     async def get_by_id(self, user_id: str) -> Optional[User]:
+        uid = _as_uuid(user_id)
+        if uid is None:
+            return None
         result = await self._session.execute(
             select(UserModel)
             .options(joinedload(UserModel.profile))
-            .where(UserModel.id == user_id)
+            .where(UserModel.id == uid)
         )
         orm = result.scalar_one_or_none()
         return _to_entity(orm) if orm else None
@@ -62,7 +81,7 @@ class UserRepository(BaseRepository, IUserRepository):
             username=username,
             email=email,
             password_hash=password_hash,
-            profile_id=profile_id,
+            profile_id=_as_uuid(profile_id),
         )
         self._session.add(orm)
         await self._session.flush()
@@ -77,7 +96,7 @@ class UserRepository(BaseRepository, IUserRepository):
     ) -> None:
         await self._session.execute(
             update(UserModel)
-            .where(UserModel.id == user_id)
+            .where(UserModel.id == _as_uuid(user_id))
             .values(
                 password_hash=password_hash,
                 must_change_password=must_change_password,
@@ -88,21 +107,21 @@ class UserRepository(BaseRepository, IUserRepository):
     async def update_status(self, user_id: str, status: str) -> None:
         await self._session.execute(
             update(UserModel)
-            .where(UserModel.id == user_id)
+            .where(UserModel.id == _as_uuid(user_id))
             .values(status=status, updated_at=datetime.now(timezone.utc))
         )
 
     async def update_last_login(self, user_id: str, at: datetime) -> None:
         await self._session.execute(
             update(UserModel)
-            .where(UserModel.id == user_id)
+            .where(UserModel.id == _as_uuid(user_id))
             .values(last_login_at=at, updated_at=at)
         )
 
     async def set_provisional_password_sent(self, user_id: str, at: datetime) -> None:
         await self._session.execute(
             update(UserModel)
-            .where(UserModel.id == user_id)
+            .where(UserModel.id == _as_uuid(user_id))
             .values(
                 provisional_password_sent_at=at,
                 updated_at=datetime.now(timezone.utc),
@@ -119,6 +138,12 @@ class UserRepository(BaseRepository, IUserRepository):
         )
         return [_to_entity(row) for row in result.scalars().all()]
 
+    async def count_all(self) -> int:
+        result = await self._session.execute(
+            select(func.count()).select_from(UserModel)
+        )
+        return result.scalar_one()
+
     # --- Refresh tokens ---
 
     async def create_refresh_token(
@@ -130,7 +155,7 @@ class UserRepository(BaseRepository, IUserRepository):
         user_agent: Optional[str] = None,
     ) -> None:
         token = RefreshTokenModel(
-            user_id=user_id,
+            user_id=_as_uuid(user_id),
             token_hash=token_hash,
             expires_at=expires_at,
             ip_address=ip_address,
@@ -155,7 +180,7 @@ class UserRepository(BaseRepository, IUserRepository):
     async def revoke_all_refresh_tokens(self, user_id: str) -> None:
         await self._session.execute(
             update(RefreshTokenModel)
-            .where(RefreshTokenModel.user_id == user_id)
+            .where(RefreshTokenModel.user_id == _as_uuid(user_id))
             .values(revoked=True)
         )
 

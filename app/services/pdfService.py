@@ -5,7 +5,7 @@ import zipfile
 from datetime import datetime
 from typing import List, Literal, Optional
 import pikepdf
-import fitz
+import pymupdf as fitz
 from PIL import Image
 from app.utils import parse_page_ranges
 

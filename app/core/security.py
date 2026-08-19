@@ -4,9 +4,10 @@ import string
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import jwt
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
-from jose import ExpiredSignatureError, JWTError, jwt
+from jwt import ExpiredSignatureError, PyJWTError
 
 from app.core.config import get_settings
 from app.core.exceptions import InvalidCredentialsError, TokenExpiredError, TokenInvalidError
@@ -92,10 +93,11 @@ def decode_token(token: str) -> dict:
             token,
             settings.jwt_public_key_pem(),
             algorithms=[settings.JWT_ALGORITHM],
+            options={"require": ["exp", "iat", "sub", "type"]},
         )
     except ExpiredSignatureError:
         raise TokenExpiredError()
-    except JWTError:
+    except PyJWTError:
         raise TokenInvalidError()
 
 

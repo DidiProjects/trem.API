@@ -106,9 +106,11 @@ async def convert_image_endpoint(
                 "Content-Disposition": f"attachment; filename={output_filename}"
             }
         )
-    
+
     except ImageServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)
+    except HTTPException:
+        raise  # já é um erro de cliente — não remapear para 500
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
 
@@ -180,9 +182,11 @@ async def compress_image_endpoint(
                 "X-Reduction-Percent": str(stats["reduction_percent"])
             }
         )
-    
+
     except ImageServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)
+    except HTTPException:
+        raise  # já é um erro de cliente — não remapear para 500
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
 
