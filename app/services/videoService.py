@@ -1,4 +1,4 @@
-from moviepy.editor import VideoFileClip
+from moviepy import VideoFileClip
 import os
 
 VIDEO_EXTENSIONS = {'.mp4', '.avi', '.mov', '.mkv', '.webm', '.wmv', '.flv', '.m4v'}
@@ -75,7 +75,7 @@ def cut_video(input_path: str, start: float, end: float, output_path: str) -> st
                 f"Tempo inicial ({start}s) excede a duração do vídeo ({clip.duration:.2f}s)"
             )
         
-        subclip = clip.subclip(start, end)
+        subclip = clip.subclipped(start, end)
         subclip.write_videofile(
             output_path,
             codec="libx264",

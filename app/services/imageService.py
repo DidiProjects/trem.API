@@ -2,7 +2,12 @@ import io
 import os
 from typing import Literal
 from PIL import Image
-import cairosvg
+
+# Import lazy para evitar falha de startup quando libcairo não está disponível (dev local)
+try:
+    import cairosvg as _cairosvg
+except OSError:
+    _cairosvg = None  # type: ignore[assignment]
 
 IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif', '.svg'}
 OUTPUT_FORMATS = {'jpeg', 'png', 'webp', 'gif', 'bmp', 'tiff', 'svg'}
@@ -55,7 +60,7 @@ def images_to_pdf(
     images = []
     for content in image_contents:
         if is_svg(content):
-            png_bytes = cairosvg.svg2png(bytestring=content, scale=2.0)
+            png_bytes = _cairosvg.svg2png(bytestring=content, scale=2.0)
             img = Image.open(io.BytesIO(png_bytes))
         else:
             img = Image.open(io.BytesIO(content))
@@ -139,7 +144,7 @@ def images_to_pdf(
 
 
 def convert_svg_to_png(content: bytes, scale: float = 1.0) -> bytes:
-    return cairosvg.svg2png(bytestring=content, scale=scale)
+    return _cairosvg.svg2png(bytestring=content, scale=scale)
 
 
 def convert_image(
@@ -159,12 +164,12 @@ def convert_image(
             return output_buffer, 'svg'
         
         if output_format == 'png':
-            png_bytes = cairosvg.svg2png(bytestring=content, scale=scale)
+            png_bytes = _cairosvg.svg2png(bytestring=content, scale=scale)
             output_buffer.write(png_bytes)
             output_buffer.seek(0)
             return output_buffer, 'png'
         
-        png_bytes = cairosvg.svg2png(bytestring=content, scale=scale)
+        png_bytes = _cairosvg.svg2png(bytestring=content, scale=scale)
         img = Image.open(io.BytesIO(png_bytes))
     else:
         if output_format == 'svg':

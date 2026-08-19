@@ -1,4 +1,13 @@
+networks:
+  trem-network:
+    driver: bridge
+
+volumes:
+  uploads:
+  postgres_data:
+
 services:
+  # ── API principal ─────────────────────────────────────────────────────────
   api:
     build: .
     container_name: trem-api
@@ -9,20 +18,63 @@ services:
       - API_URL=${API_URL}
       - UPLOAD_DIR=/tmp/uploads
       - MAX_FILE_SIZE=52428800
-      - EMAIL_RECIPIENT=${EMAIL_RECIPIENT}
+      # JWT RS256
+      - JWT_PRIVATE_KEY=${JWT_PRIVATE_KEY}
+      - JWT_PUBLIC_KEY=${JWT_PUBLIC_KEY}
+      # Banco
+      - DATABASE_URL=postgresql+asyncpg://trem:${POSTGRES_PASSWORD}@postgres:5432/trem
+      # Email
       - EMAIL_SMTP_HOST=${EMAIL_SMTP_HOST}
       - EMAIL_SMTP_PORT=${EMAIL_SMTP_PORT}
       - EMAIL_SMTP_USER=${EMAIL_SMTP_USER}
       - EMAIL_SMTP_PASSWORD=${EMAIL_SMTP_PASSWORD}
+      - EMAIL_RECIPIENT=${EMAIL_RECIPIENT}
+      # API aérea (opcional)
+      - AIRLINE_API_URL=${AIRLINE_API_URL:-}
+      - AIRLINE_API_KEY=${AIRLINE_API_KEY:-}
     volumes:
       - uploads:/tmp/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
+    networks:
+      - trem-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3002/health" ]
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 15s
+
+  # ── PostgreSQL ────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: trem-postgres
+    environment:
+      - POSTGRES_DB=trem
+      - POSTGRES_USER=trem
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - trem-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trem -d trem"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
       start_period: 10s
 
-volumes:
-  uploads:
+  # ── Adminer (painel web gratuito para PostgreSQL) ─────────────────────────
+  adminer:
+    image: adminer:latest
+    container_name: trem-adminer
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    networks:
+      - trem-network
+    depends_on:
+      - postgres

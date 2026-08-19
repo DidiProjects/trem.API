@@ -1,10 +1,40 @@
-fastapi==0.109.0
-uvicorn[standard]==0.27.0
-pikepdf==8.15.1
-python-multipart==0.0.6
-PyMuPDF==1.24.0
-pytest==7.4.0
-httpx==0.26.0
-moviepy==1.0.3
+# ---------------------------------------------------------------------------
+# Dependências de runtime — trem.API
+# Versões fixadas para builds reprodutíveis. Deps de teste: requirements-dev.txt
+# ---------------------------------------------------------------------------
+
+# Web framework
+fastapi==0.141.1
+uvicorn[standard]==0.52.3
+python-multipart==0.0.32
+
+# Config / validação
+pydantic==2.13.4
+pydantic-settings==2.15.0
+email-validator==2.3.0
+
+# Database
+sqlalchemy==2.0.52
+asyncpg==0.31.0
+alembic==1.19.1
+greenlet==3.5.5
+
+# Auth
+argon2-cffi==25.1.0
+PyJWT[crypto]==2.13.0
+cryptography==50.0.0
+
+# HTTP client (API aérea)
+httpx==0.28.1
+
+# Rate limiting
+slowapi==0.1.10
+
+# Processamento de arquivos
+pikepdf==10.12.0
+PyMuPDF==1.28.2
+# Travado em 11.x: moviepy 2.2.1 exige pillow<12
+pillow==11.3.0
+moviepy==2.2.1
 openai-whisper==20250625
-cairosvg==2.7.1
+cairosvg==2.9.0

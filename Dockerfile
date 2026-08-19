@@ -20,8 +20,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY requirements.txt .
 
+# Sem --no-cache-dir: ele anulava o cache mount acima, refazendo todo o download
+# a cada build. --timeout/--retries cobrem links lentos (torch sozinho são 122 MB).
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --timeout 120 --retries 10 -r requirements.txt
 
 COPY . .
 
