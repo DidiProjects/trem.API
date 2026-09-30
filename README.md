@@ -75,7 +75,12 @@ app/
 
 ### File Protection
 - Magic bytes validation (verifies actual file content)
-- Size limit (50MB for PDF, 100MB for ZIP)
+- Size limit per file (50MB for PDF, 100MB for ZIP)
+- Request size limit enforced by the API, returned as JSON 413: 50MB per request by default,
+  100MB for `/audio` and `/movie` (`MAX_REQUEST_SIZE`, `MAX_MEDIA_REQUEST_SIZE`). The limit
+  covers the whole request, so multi-file endpoints are capped on the sum of the files
+- The reverse proxy must not cap the body (`client_max_body_size 0;` on nginx): nginx's 1MB
+  default answers 413 in HTML before the request reaches the API
 - Filename sanitization
 - Path traversal protection
 - Limit of 20 files per merge
