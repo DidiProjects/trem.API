@@ -1,6 +1,7 @@
 import os
 import tempfile
 from moviepy import VideoFileClip, AudioFileClip
+from moviepy.video.io.ffmpeg_reader import ffmpeg_parse_infos
 
 _whisper_model = None
 
@@ -32,6 +33,12 @@ def get_whisper_model():
 
         _whisper_model = whisper.load_model("base")
     return _whisper_model
+
+
+def _has_video_stream(path: str) -> bool:
+    # Voice notes from iPhone/WhatsApp come as .mp4 with only an AAC track;
+    # VideoFileClip fails on them trying to read the first frame.
+    return ffmpeg_parse_infos(path).get("video_found", False)
 
 
 def validate_cut_input(filename: str, start: float, end: float) -> str:
@@ -166,7 +173,7 @@ def transcribe(input_path: str, language: str = None) -> dict:
     try:
         ext = os.path.splitext(input_path)[1].lower()
         
-        if ext in VIDEO_EXTENSIONS:
+        if ext in VIDEO_EXTENSIONS and _has_video_stream(input_path):
             clip = VideoFileClip(input_path)
             duration = clip.duration
             
