@@ -7,6 +7,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from app.api.middleware.body_size_limit import BodySizeLimitMiddleware
 from app.api.v1.routers import api_clients as api_clients_router
 from app.api.v1.routers import auth as auth_router
 from app.api.v1.routers import users as users_router
@@ -54,6 +55,14 @@ app = FastAPI(
 )
 
 app.add_middleware(CacheControlMiddleware)
+app.add_middleware(
+    BodySizeLimitMiddleware,
+    default_limit=get_settings().MAX_REQUEST_SIZE,
+    limits_by_prefix={
+        "/audio": get_settings().MAX_MEDIA_REQUEST_SIZE,
+        "/movie": get_settings().MAX_MEDIA_REQUEST_SIZE,
+    },
+)
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 # --- Routers v1: autenticação e gestão de usuários ---

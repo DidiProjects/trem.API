@@ -325,6 +325,18 @@ def sample_png_bytes():
 
 
 @pytest.fixture
+def sample_heic_bytes():
+    from PIL import Image
+    from pillow_heif import register_heif_opener
+
+    register_heif_opener()
+    img = Image.new("RGB", (120, 80), (30, 120, 200))
+    buf = io.BytesIO()
+    img.save(buf, format="HEIF")
+    return buf.getvalue()
+
+
+@pytest.fixture
 def sample_jpeg_bytes():
     from PIL import Image
 

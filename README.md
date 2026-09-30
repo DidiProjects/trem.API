@@ -26,7 +26,7 @@ REST API for PDF, Video, Audio and Image file manipulation with API Key authenti
 - **Transcribe Audio**: Transcribe audio to text with timestamps
 
 ### Image Manipulation
-- **Convert Image**: Convert between formats (JPG, PNG, WebP, GIF, BMP, TIFF, SVG)
+- **Convert Image**: Convert between formats (JPG, PNG, WebP, GIF, BMP, TIFF, SVG); HEIC/HEIF accepted as input on every image endpoint
 - **Compress Image**: Reduce image file size with quality control
 - **Images to PDF**: Combine multiple images into a single PDF
 
@@ -62,7 +62,7 @@ app/
 - MP3, WAV, M4A, OGG, FLAC, AAC, WMA
 
 ### Image
-- Input: JPG, JPEG, PNG, GIF, BMP, WebP, TIFF, TIF, SVG
+- Input: JPG, JPEG, PNG, GIF, BMP, WebP, TIFF, TIF, SVG, HEIC, HEIF
 - Output: JPEG, PNG, WebP, GIF, BMP, TIFF
 - Note: SVG → Raster conversion supported (via CairoSVG)
 
@@ -75,7 +75,12 @@ app/
 
 ### File Protection
 - Magic bytes validation (verifies actual file content)
-- Size limit (50MB for PDF, 100MB for ZIP)
+- Size limit per file (50MB for PDF, 100MB for ZIP)
+- Request size limit enforced by the API, returned as JSON 413: 50MB per request by default,
+  100MB for `/audio` and `/movie` (`MAX_REQUEST_SIZE`, `MAX_MEDIA_REQUEST_SIZE`). The limit
+  covers the whole request, so multi-file endpoints are capped on the sum of the files
+- The reverse proxy must not cap the body (`client_max_body_size 0;` on nginx): nginx's 1MB
+  default answers 413 in HTML before the request reaches the API
 - Filename sanitization
 - Path traversal protection
 - Limit of 20 files per merge
@@ -128,6 +133,12 @@ docker exec trem-api pytest tests/test_services.py -v
 docker exec trem-api pytest tests/test_utils.py -v
 docker exec trem-api pytest tests/test_routes.py -v
 docker exec trem-api pytest tests/test_security.py -v
+```
+
+After each deploy, check uploads through Cloudflare and the reverse proxy (skipped without the variables):
+
+```bash
+SMOKE_API_URL=https://api.didilv93.com SMOKE_API_KEY=... pytest tests/test_deployed_uploads.py -v
 ```
 
 ## Endpoints

@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     # Arquivos
     UPLOAD_DIR: str = "/tmp/uploads"
     MAX_FILE_SIZE: int = 52428800  # 50 MB
+    # Whole-request caps enforced by BodySizeLimitMiddleware; /audio and /movie
+    # use the media one. Cloudflare rejects bodies above 100 MB on its own.
+    MAX_REQUEST_SIZE: int = 52428800  # 50 MB
+    MAX_MEDIA_REQUEST_SIZE: int = 104857600  # 100 MB
 
     # Email
     EMAIL_SMTP_HOST: str = "smtp.gmail.com"

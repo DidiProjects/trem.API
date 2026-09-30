@@ -35,6 +35,7 @@ pikepdf==10.12.0
 PyMuPDF==1.28.2
 # Travado em 11.x: moviepy 2.2.1 exige pillow<12
 pillow==11.3.0
+pillow-heif==1.8.0
 moviepy==2.2.1
 openai-whisper==20250625
 cairosvg==2.9.0

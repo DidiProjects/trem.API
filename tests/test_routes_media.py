@@ -242,6 +242,18 @@ class TestImageToPdf:
         assert response.status_code == 200
         assert response.content.startswith(b"%PDF")
 
+    def test_heic_images_return_pdf(self, client, sample_heic_bytes):
+        response = client.post(
+            "/image/to-pdf",
+            files=[
+                ("files", ("a.HEIC", io.BytesIO(sample_heic_bytes), "image/heic")),
+                ("files", ("b.heif", io.BytesIO(sample_heic_bytes), "image/heif")),
+            ],
+            data={"layout": "grouped", "images_per_page": 4},
+        )
+        assert response.status_code == 200
+        assert response.content.startswith(b"%PDF")
+
     def test_rgba_image_is_flattened(self, client, sample_rgba_png_bytes):
         response = client.post(
             "/image/to-pdf",
@@ -303,6 +315,15 @@ class TestImageConvert:
         )
         assert response.status_code == 200
         assert response.headers["content-type"] == content_type
+
+    def test_converts_heic_input(self, client, sample_heic_bytes):
+        response = client.post(
+            "/image/convert",
+            files={"file": ("a.heic", io.BytesIO(sample_heic_bytes), "image/heic")},
+            data={"format": "jpeg"},
+        )
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "image/jpeg"
 
     def test_raster_to_svg_returns_400(self, client, sample_png_bytes):
         response = client.post(
@@ -376,6 +397,15 @@ class TestImageCompress:
         body = response.json()
         assert "metrics" in body
         assert "base64" in body["file"]
+
+    def test_heic_input_is_compressed_to_jpeg(self, client, sample_heic_bytes):
+        response = client.post(
+            "/image/compress",
+            files={"file": ("a.heic", io.BytesIO(sample_heic_bytes), "image/heic")},
+            data={"quality": 50},
+        )
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "image/jpeg"
 
     def test_invalid_response_type_returns_400(self, client, sample_jpeg_bytes):
         response = client.post(
