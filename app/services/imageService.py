@@ -2,6 +2,9 @@ import io
 import os
 from typing import Literal
 from PIL import Image
+from pillow_heif import register_heif_opener
+
+register_heif_opener()
 
 # Import lazy para evitar falha de startup quando libcairo não está disponível (dev local)
 try:
@@ -9,7 +12,7 @@ try:
 except OSError:
     _cairosvg = None  # type: ignore[assignment]
 
-IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif', '.svg'}
+IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif', '.svg', '.heic', '.heif'}
 OUTPUT_FORMATS = {'jpeg', 'png', 'webp', 'gif', 'bmp', 'tiff', 'svg'}
 
 

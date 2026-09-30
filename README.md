@@ -26,7 +26,7 @@ REST API for PDF, Video, Audio and Image file manipulation with API Key authenti
 - **Transcribe Audio**: Transcribe audio to text with timestamps
 
 ### Image Manipulation
-- **Convert Image**: Convert between formats (JPG, PNG, WebP, GIF, BMP, TIFF, SVG)
+- **Convert Image**: Convert between formats (JPG, PNG, WebP, GIF, BMP, TIFF, SVG); HEIC/HEIF accepted as input on every image endpoint
 - **Compress Image**: Reduce image file size with quality control
 - **Images to PDF**: Combine multiple images into a single PDF
 
