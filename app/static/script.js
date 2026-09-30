@@ -134,6 +134,25 @@ function getFilenameFromResponse(response, fallback) {
     return fallback;
 }
 
+const STATUS_MESSAGES = {
+    413: 'Files are too large for this operation',
+    429: 'Too many requests, try again in a minute',
+    502: 'Server unavailable, try again shortly',
+    503: 'Server unavailable, try again shortly',
+    504: 'The server took too long to respond'
+};
+
+// Errors from the proxy or Cloudflare come as HTML, not the API's JSON.
+async function getErrorMessage(response) {
+    const fallback = STATUS_MESSAGES[response.status] || `Request error (${response.status})`;
+    try {
+        const error = await response.json();
+        return typeof error.detail === 'string' ? error.detail : fallback;
+    } catch (e) {
+        return fallback;
+    }
+}
+
 async function makeRequest(endpoint, formData) {
     const apiKey = getApiKey();
     if (!apiKey) return null;
@@ -150,8 +169,7 @@ async function makeRequest(endpoint, formData) {
         });
 
         if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || 'Request error');
+            throw new Error(await getErrorMessage(response));
         }
 
         return response;
