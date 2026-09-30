@@ -62,7 +62,7 @@ app/
 - MP3, WAV, M4A, OGG, FLAC, AAC, WMA
 
 ### Image
-- Input: JPG, JPEG, PNG, GIF, BMP, WebP, TIFF, TIF, SVG
+- Input: JPG, JPEG, PNG, GIF, BMP, WebP, TIFF, TIF, SVG, HEIC, HEIF
 - Output: JPEG, PNG, WebP, GIF, BMP, TIFF
 - Note: SVG → Raster conversion supported (via CairoSVG)
 
