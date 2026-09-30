@@ -135,6 +135,12 @@ docker exec trem-api pytest tests/test_routes.py -v
 docker exec trem-api pytest tests/test_security.py -v
 ```
 
+After each deploy, check uploads through Cloudflare and the reverse proxy (skipped without the variables):
+
+```bash
+SMOKE_API_URL=https://api.didilv93.com SMOKE_API_KEY=... pytest tests/test_deployed_uploads.py -v
+```
+
 ## Endpoints
 
 All endpoints require the `X-API-Key` header.
