@@ -40,6 +40,7 @@ app/
 │   │   │   └── support.py
 │   │   └── dependencies.py      # get_current_user, require_profile, get_db
 │   └── middleware/
+│       ├── body_size_limit.py   # 413 em JSON por prefixo; o proxy não limita corpo
 │       ├── rate_limit.py
 │       └── request_logger.py
 │
