@@ -148,6 +148,9 @@ class TestTranscribe:
         ), patch(
             "app.services.audioService.AudioFileClip",
             side_effect=OSError("formato não suportado"),
+        ), patch(
+            "app.services.audioService.ffmpeg_parse_infos",
+            return_value={"video_found": True},
         ):
             yield mock
 
@@ -203,6 +206,20 @@ class TestTranscribe:
             with pytest.raises(AudioServiceError) as exc:
                 transcribe(str(video))
         assert "trilha de áudio" in exc.value.message
+
+    def test_audio_only_mp4_skips_video_decoding(self, model, tmp_path):
+        voice = tmp_path / "voice.mp4"
+        voice.write_bytes(b"fake")
+
+        with patch(
+            "app.services.audioService.ffmpeg_parse_infos",
+            return_value={"video_found": False, "audio_found": True},
+        ), patch("app.services.audioService.VideoFileClip") as video_clip:
+            result = transcribe(str(voice))
+
+        video_clip.assert_not_called()
+        assert model.transcribe.call_args.args == (str(voice),)
+        assert result["text"] == "olá mundo"
 
     def test_video_clip_is_closed(self, model, tmp_path):
         video = tmp_path / "v.mp4"
