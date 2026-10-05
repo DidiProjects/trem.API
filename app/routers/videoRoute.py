@@ -3,12 +3,17 @@ from fastapi.responses import FileResponse, JSONResponse
 from starlette.background import BackgroundTask
 import tempfile
 import os
+import shutil
 from app.api.v1.dependencies import require_profile
 from app.domain.entities.api_client import Principal
 from app.services.videoService import cut_video, validate_cut_input, VideoServiceError
 from app.services.audioService import transcribe, validate_transcription_input, AudioServiceError
 
 router = APIRouter()
+
+# Media uploads go up to MAX_MEDIA_REQUEST_SIZE (GBs); copying in chunks keeps
+# the spooled upload out of memory.
+_COPY_CHUNK = 1024 * 1024
 
 
 def cleanup_files(*paths):
@@ -38,7 +43,7 @@ async def movie_cut(
         ext = validate_cut_input(file.filename, start, end)
         
         with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp_in:
-            temp_in.write(await file.read())
+            shutil.copyfileobj(file.file, temp_in, _COPY_CHUNK)
             temp_in_path = temp_in.name
         
         temp_out = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
@@ -81,7 +86,7 @@ async def movie_transcribe(
         ext = validate_transcription_input(file.filename, language)
         
         with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp_file:
-            temp_file.write(await file.read())
+            shutil.copyfileobj(file.file, temp_file, _COPY_CHUNK)
             temp_path = temp_file.name
         
         result = transcribe(temp_path, language)
