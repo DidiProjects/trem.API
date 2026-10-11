@@ -81,8 +81,13 @@ function getApiKey() {
     return apiKey;
 }
 
-function showLoading() {
+function showLoading(message = 'Processing...') {
+    setLoadingMessage(message);
     document.getElementById('loading').classList.remove('hidden');
+}
+
+function setLoadingMessage(message) {
+    document.querySelector('#loading p').textContent = message;
 }
 
 function hideLoading() {
@@ -180,6 +185,104 @@ async function makeRequest(endpoint, formData) {
     }
 }
 
+// Cloudflare drops requests over 100 MB and responses slower than 100 s, so
+// files go up in parts and the transcription result is polled.
+const TRANSCRIBE_POLL_MS = 3000;
+const REQUEST_RETRIES = 3;
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+async function apiFetch(endpoint, options = {}) {
+    let response;
+    try {
+        response = await fetch(endpoint, {
+            ...options,
+            headers: { 'X-API-Key': getApiKey(), ...options.headers }
+        });
+    } catch (error) {
+        throw Object.assign(new Error('Connection lost, check your network'), { retryable: true });
+    }
+    if (!response.ok) {
+        const error = new Error(await getErrorMessage(response));
+        error.retryable = response.status >= 500 || response.status === 429;
+        throw error;
+    }
+    return response;
+}
+
+async function withRetries(request) {
+    for (let attempt = 1; ; attempt++) {
+        try {
+            return await request();
+        } catch (error) {
+            if (!error.retryable || attempt >= REQUEST_RETRIES) throw error;
+            await sleep(2000 * attempt);
+        }
+    }
+}
+
+async function uploadForTranscription(prefix, file, language) {
+    const upload = await (await withRetries(() => apiFetch(`${prefix}/transcribe/uploads`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: file.name, size: file.size, language: language || null })
+    }))).json();
+
+    const base = `${prefix}/transcribe/uploads/${upload.upload_id}`;
+    try {
+        for (let index = 0; index < upload.total_parts; index++) {
+            const start = index * upload.part_size;
+            const part = file.slice(start, start + upload.part_size);
+            await withRetries(() => apiFetch(`${base}/parts/${index}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/octet-stream' },
+                body: part
+            }));
+            setLoadingMessage(`Uploading... ${Math.round((index + 1) / upload.total_parts * 100)}%`);
+        }
+        const job = await (await withRetries(() => apiFetch(`${base}/complete`, { method: 'POST' }))).json();
+        return job.job_id;
+    } catch (error) {
+        apiFetch(base, { method: 'DELETE' }).catch(() => {});
+        throw error;
+    }
+}
+
+async function waitForTranscription(prefix, jobId) {
+    while (true) {
+        await sleep(TRANSCRIBE_POLL_MS);
+        const job = await (await withRetries(() => apiFetch(`${prefix}/transcribe/jobs/${jobId}`))).json();
+        if (job.status === 'done') return job.result;
+        if (job.status === 'failed') throw new Error(job.error);
+        setLoadingMessage(job.status === 'queued' ? 'Waiting in queue...' : 'Transcribing...');
+    }
+}
+
+function setupTranscribeForm({ formId, fileId, languageId, resultId, prefix, successMessage }) {
+    document.getElementById(formId).addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (!getApiKey()) return;
+
+        const file = document.getElementById(fileId).files[0];
+        const language = document.getElementById(languageId).value;
+
+        showLoading('Uploading... 0%');
+        try {
+            const jobId = await uploadForTranscription(prefix, file, language);
+            setLoadingMessage('Waiting in queue...');
+            const result = await waitForTranscription(prefix, jobId);
+            const resultBox = document.getElementById(resultId);
+            resultBox.innerHTML = `<pre>${JSON.stringify(result, null, 2)}</pre>`;
+            resultBox.classList.remove('hidden');
+            showToast(successMessage);
+        } catch (error) {
+            showToast(error.message, 'error');
+        } finally {
+            hideLoading();
+        }
+    });
+}
+
 function setupFormHandlers() {
     // PDF Split Form
     document.getElementById('splitForm').addEventListener('submit', async (e) => {
@@ -216,46 +319,22 @@ function setupFormHandlers() {
         }
     });
 
-    // Movie Transcribe Form
-    document.getElementById('transcribeMovieForm').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const formData = new FormData();
-        formData.append('file', document.getElementById('transcribeMovieFile').files[0]);
-        const language = document.getElementById('transcribeMovieLanguage').value;
-        if (language) {
-            formData.append('language', language);
-        }
-
-        const response = await makeRequest('/movie/transcribe', formData);
-        if (response) {
-            const data = await response.json();
-            hideLoading();
-            const resultBox = document.getElementById('transcribeMovieResult');
-            resultBox.innerHTML = `<pre>${JSON.stringify(data, null, 2)}</pre>`;
-            resultBox.classList.remove('hidden');
-            showToast('Transcrição do vídeo concluída!');
-        }
+    setupTranscribeForm({
+        formId: 'transcribeMovieForm',
+        fileId: 'transcribeMovieFile',
+        languageId: 'transcribeMovieLanguage',
+        resultId: 'transcribeMovieResult',
+        prefix: '/movie',
+        successMessage: 'Transcrição do vídeo concluída!'
     });
 
-    // Audio Transcribe Form
-    document.getElementById('transcribeForm').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const formData = new FormData();
-        formData.append('file', document.getElementById('transcribeFile').files[0]);
-        const language = document.getElementById('transcribeLanguage').value;
-        if (language) {
-            formData.append('language', language);
-        }
-
-        const response = await makeRequest('/audio/transcribe', formData);
-        if (response) {
-            const data = await response.json();
-            hideLoading();
-            const resultBox = document.getElementById('transcribeResult');
-            resultBox.innerHTML = `<pre>${JSON.stringify(data, null, 2)}</pre>`;
-            resultBox.classList.remove('hidden');
-            showToast('Transcrição concluída!');
-        }
+    setupTranscribeForm({
+        formId: 'transcribeForm',
+        fileId: 'transcribeFile',
+        languageId: 'transcribeLanguage',
+        resultId: 'transcribeResult',
+        prefix: '/audio',
+        successMessage: 'Transcrição concluída!'
     });
 
     // Audio Cut Form

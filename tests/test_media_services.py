@@ -5,6 +5,7 @@ moviepy e Whisper são mockados: o objetivo é fixar o contrato dessas funções
 (inclusive a API do moviepy 2.x — `subclipped`, não mais `subclip`) e garantir
 que os recursos são sempre fechados, mesmo em erro.
 """
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -194,6 +195,20 @@ class TestTranscribe:
 
         clip.audio.write_audiofile.assert_called_once()
         assert result["duration"] == 12.0
+
+    def test_extracted_audio_goes_to_work_dir_and_is_removed(self, model, tmp_path):
+        work_dir = tmp_path / "job"
+        work_dir.mkdir()
+        video = work_dir / "v.mp4"
+        video.write_bytes(b"fake")
+        clip = _clip()
+
+        with patch("app.services.audioService.VideoFileClip", return_value=clip):
+            transcribe(str(video), work_dir=str(work_dir))
+
+        wav_path = clip.audio.write_audiofile.call_args.args[0]
+        assert Path(wav_path).parent == work_dir
+        assert list(work_dir.iterdir()) == [video]
 
     def test_video_without_audio_track_raises(self, model, tmp_path):
         video = tmp_path / "v.mp4"

@@ -151,7 +151,7 @@ def validate_transcription_input(filename: str, language: str = None) -> str:
     return ext
 
 
-def transcribe(input_path: str, language: str = None) -> dict:
+def transcribe(input_path: str, language: str = None, work_dir: str = None) -> dict:
     """
     Transcreve o áudio de um vídeo ou arquivo de áudio.
     Aceita tanto arquivos de vídeo quanto de áudio.
@@ -159,6 +159,7 @@ def transcribe(input_path: str, language: str = None) -> dict:
     Args:
         input_path: Caminho do arquivo de vídeo/áudio
         language: Código do idioma (pt, en, es, etc.) ou None para auto-detectar
+        work_dir: Where the intermediate WAV goes (default: system temp dir)
     
     Returns:
         Dicionário com a transcrição completa, segmentos e metadados
@@ -180,7 +181,7 @@ def transcribe(input_path: str, language: str = None) -> dict:
             if clip.audio is None:
                 raise AudioServiceError("O vídeo não possui trilha de áudio")
             
-            audio_path = tempfile.NamedTemporaryFile(delete=False, suffix=".wav").name
+            audio_path = tempfile.NamedTemporaryFile(delete=False, suffix=".wav", dir=work_dir).name
             clip.audio.write_audiofile(audio_path, logger=None)
             file_to_transcribe = audio_path
         else:
