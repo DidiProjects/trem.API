@@ -57,3 +57,25 @@ def test_oversized_upload_is_rejected_by_the_app():
     assert response.status_code == 413
     assert _answered_by_app(response), response.text[:200]
     assert "MB limit" in response.json()["detail"]
+
+
+def test_transcription_part_goes_through_the_proxy():
+    # A full 50 MB part crosses Cloudflare; the upload is cancelled so the
+    # server keeps nothing and no transcription runs.
+    base = f"{API_URL.rstrip('/')}/movie/transcribe/uploads"
+    headers = {"X-API-Key": API_KEY}
+    created = httpx.post(
+        base, headers=headers, json={"filename": "smoke.mp4", "size": 60 * MB}, timeout=30
+    )
+    assert created.status_code == 201, created.text[:200]
+    upload = created.json()
+    try:
+        part = httpx.put(
+            f"{base}/{upload['upload_id']}/parts/0",
+            headers=headers,
+            content=b"\0" * upload["part_size"],
+            timeout=120,
+        )
+        assert part.status_code == 204, part.text[:200]
+    finally:
+        httpx.delete(f"{base}/{upload['upload_id']}", headers=headers, timeout=30)
