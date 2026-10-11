@@ -508,16 +508,30 @@ For specific formats, adjustments may be necessary.</pre>
                                 </table>
                             </div>
                             <div class="detail-section">
-                                <h4>Response Example</h4>
+                                <h4>Response Example (202)</h4>
+                                <pre class="code-block">{"job_id": "5f0c...", "status": "queued"}</pre>
+                                <p>A transcrição roda em segundo plano. Consulte <code>GET /movie/transcribe/jobs/{job_id}</code> até <code>status</code> ser <code>done</code> (com <code>result</code>) ou <code>failed</code> (com <code>error</code>):</p>
                                 <pre class="code-block">{
-  "text": "Transcrição completa do vídeo...",
-  "segments": [
-    {"start": 0.0, "end": 2.5, "text": "Olá mundo"},
-    {"start": 2.5, "end": 5.0, "text": "Como vai você?"}
-  ],
-  "language": "pt",
-  "duration": 120.5
+  "job_id": "5f0c...",
+  "status": "done",
+  "result": {
+    "text": "Transcrição completa do vídeo...",
+    "segments": [{"start": 0.0, "end": 2.5, "text": "Olá mundo"}],
+    "language": "pt",
+    "duration": 120.5
+  }
 }</pre>
+                                <p>Resultados ficam disponíveis por 24 h.</p>
+                            </div>
+                            <div class="detail-section">
+                                <h4>Arquivos acima de 100 MB</h4>
+                                <p>O Cloudflare recusa requisições acima de 100 MB. Envie em partes:</p>
+                                <ol>
+                                    <li><code>POST /movie/transcribe/uploads</code> com JSON <code>{"filename", "size", "language"}</code> → <code>{"upload_id", "part_size", "total_parts"}</code></li>
+                                    <li><code>PUT /movie/transcribe/uploads/{upload_id}/parts/{index}</code> com os bytes da parte (<code>application/octet-stream</code>), para cada índice de 0 a <code>total_parts - 1</code></li>
+                                    <li><code>POST /movie/transcribe/uploads/{upload_id}/complete</code> → <code>{"job_id", "status"}</code></li>
+                                </ol>
+                                <p><code>DELETE /movie/transcribe/uploads/{upload_id}</code> cancela. Uploads sem atividade expiram em 24 h.</p>
                             </div>
                             <div class="detail-section">
                                 <h4>cURL Example</h4>
@@ -627,16 +641,30 @@ For specific formats, adjustments may be necessary.</pre>
                                 </table>
                             </div>
                             <div class="detail-section">
-                                <h4>Response Example</h4>
+                                <h4>Response Example (202)</h4>
+                                <pre class="code-block">{"job_id": "5f0c...", "status": "queued"}</pre>
+                                <p>A transcrição roda em segundo plano. Consulte <code>GET /audio/transcribe/jobs/{job_id}</code> até <code>status</code> ser <code>done</code> (com <code>result</code>) ou <code>failed</code> (com <code>error</code>):</p>
                                 <pre class="code-block">{
-  "text": "Transcrição completa...",
-  "segments": [
-    {"start": 0.0, "end": 2.5, "text": "Olá mundo"},
-    {"start": 2.5, "end": 5.0, "text": "Como vai você?"}
-  ],
-  "language": "pt",
-  "duration": 120.5
+  "job_id": "5f0c...",
+  "status": "done",
+  "result": {
+    "text": "Transcrição completa...",
+    "segments": [{"start": 0.0, "end": 2.5, "text": "Olá mundo"}],
+    "language": "pt",
+    "duration": 120.5
+  }
 }</pre>
+                                <p>Resultados ficam disponíveis por 24 h.</p>
+                            </div>
+                            <div class="detail-section">
+                                <h4>Arquivos acima de 100 MB</h4>
+                                <p>O Cloudflare recusa requisições acima de 100 MB. Envie em partes:</p>
+                                <ol>
+                                    <li><code>POST /audio/transcribe/uploads</code> com JSON <code>{"filename", "size", "language"}</code> → <code>{"upload_id", "part_size", "total_parts"}</code></li>
+                                    <li><code>PUT /audio/transcribe/uploads/{upload_id}/parts/{index}</code> com os bytes da parte (<code>application/octet-stream</code>), para cada índice de 0 a <code>total_parts - 1</code></li>
+                                    <li><code>POST /audio/transcribe/uploads/{upload_id}/complete</code> → <code>{"job_id", "status"}</code></li>
+                                </ol>
+                                <p><code>DELETE /audio/transcribe/uploads/{upload_id}</code> cancela. Uploads sem atividade expiram em 24 h.</p>
                             </div>
                             <div class="detail-section">
                                 <h4>cURL Example</h4>

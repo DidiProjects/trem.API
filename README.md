@@ -256,18 +256,48 @@ file: video.mp4
 language: pt (optional, auto-detect if empty)
 ```
 
-Response:
+Transcription runs as a background job. The response is `202` with the job id:
+```json
+{"job_id": "5f0c...", "status": "queued"}
+```
+
+Poll `GET /movie/transcribe/jobs/{job_id}` until `status` is `done` or `failed`:
 ```json
 {
-  "text": "Full transcription...",
-  "segments": [
-    {"start": 0.0, "end": 2.5, "text": "Hello world"},
-    {"start": 2.5, "end": 5.0, "text": "How are you?"}
-  ],
-  "language": "en",
-  "duration": 120.5
+  "job_id": "5f0c...",
+  "status": "done",
+  "result": {
+    "text": "Full transcription...",
+    "segments": [
+      {"start": 0.0, "end": 2.5, "text": "Hello world"},
+      {"start": 2.5, "end": 5.0, "text": "How are you?"}
+    ],
+    "language": "en",
+    "duration": 120.5
+  }
 }
 ```
+A failed job carries `error` instead of `result`.
+
+#### Transcribe large files (upload in parts)
+
+Cloudflare rejects request bodies over 100 MB and responses slower than 100 s, so
+large files are sent in parts. Same flow under `/audio`:
+
+1. `POST /movie/transcribe/uploads` with JSON `{"filename": "video.mp4", "size": <bytes>, "language": "pt"}`
+   returns `{"upload_id", "part_size", "total_parts"}`
+2. `PUT /movie/transcribe/uploads/{upload_id}/parts/{index}` with the raw bytes of each part
+   (`application/octet-stream`), index `0` to `total_parts - 1`. Parts may be retried and
+   sent in any order; each must be exactly `part_size` bytes, except the last
+3. `POST /movie/transcribe/uploads/{upload_id}/complete` returns the job, polled as above
+
+`DELETE /movie/transcribe/uploads/{upload_id}` cancels an upload and deletes its parts.
+
+Jobs and uploads are kept in memory, scoped to the caller, and run one at a time.
+Their files live under `UPLOAD_DIR/transcriptions`, one directory each, removed when the
+job ends or the upload is cancelled; the directory is wiped at startup. Idle uploads
+and results expire after `TRANSCRIPTION_TTL_SECONDS` (24 h). Part size:
+`TRANSCRIPTION_PART_SIZE` (50 MB). The API must run as a single process.
 
 ### Audio Endpoints
 
@@ -289,6 +319,9 @@ Content-Type: multipart/form-data
 file: audio.mp3
 language: pt (optional, auto-detect if empty)
 ```
+
+Returns a job, like `/movie/transcribe`; poll `GET /audio/transcribe/jobs/{job_id}`.
+Large files use the upload in parts under `/audio/transcribe/uploads`.
 
 ### Image Endpoints
 
@@ -393,15 +426,34 @@ curl -X POST "http://localhost:3002/image/to-pdf" \
 ### Python
 
 ```python
+import os
+import time
+
 import requests
 
-url = "http://localhost:3002/movie/transcribe"
+base = "http://localhost:3002/movie/transcribe"
 headers = {"X-API-Key": "your-key"}
-files = {"file": open("video.mp4", "rb")}
-data = {"language": "pt"}
 
-response = requests.post(url, headers=headers, files=files, data=data)
-print(response.json())
+# Upload in parts (works for any size)
+path = "video.mp4"
+upload = requests.post(
+    f"{base}/uploads",
+    headers=headers,
+    json={"filename": os.path.basename(path), "size": os.path.getsize(path), "language": "pt"},
+).json()
+with open(path, "rb") as f:
+    for index in range(upload["total_parts"]):
+        requests.put(
+            f"{base}/uploads/{upload['upload_id']}/parts/{index}",
+            headers=headers,
+            data=f.read(upload["part_size"]),
+        ).raise_for_status()
+job = requests.post(f"{base}/uploads/{upload['upload_id']}/complete", headers=headers).json()
+
+while job["status"] not in ("done", "failed"):
+    time.sleep(3)
+    job = requests.get(f"{base}/jobs/{job['job_id']}", headers=headers).json()
+print(job.get("result") or job["error"])
 
 # Image compression
 url = "http://localhost:3002/image/compress"

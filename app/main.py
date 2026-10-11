@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import hashlib
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -12,7 +14,15 @@ from app.api.v1.routers import api_clients as api_clients_router
 from app.api.v1.routers import auth as auth_router
 from app.api.v1.routers import users as users_router
 from app.core.config import get_settings
-from app.routers import audioRoute, imageRoute, pdfRoute, supportRoute, videoRoute
+from app.routers import (
+    audioRoute,
+    imageRoute,
+    pdfRoute,
+    supportRoute,
+    transcriptionRoute,
+    videoRoute,
+)
+from app.services.transcriptionService import get_transcription_jobs, sweep_periodically
 
 static_dir = Path(__file__).parent / "static"
 
@@ -29,12 +39,23 @@ _static_hashes = {
 }
 
 
+_SWEEP_INTERVAL_SECONDS = 600
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Garante que o diretório de uploads existe
     settings = get_settings()
     Path(settings.UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
+
+    jobs = get_transcription_jobs()
+    jobs.reset_storage()
+    sweeper = asyncio.create_task(sweep_periodically(jobs, _SWEEP_INTERVAL_SECONDS))
     yield
+    sweeper.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await sweeper
+    jobs.shutdown()
 
 
 class CacheControlMiddleware(BaseHTTPMiddleware):
@@ -73,7 +94,9 @@ app.include_router(api_clients_router.router)
 # --- Routers de processamento de arquivos (mantidos) ---
 app.include_router(pdfRoute.router, prefix="/pdf", tags=["PDF"])
 app.include_router(videoRoute.router, prefix="/movie", tags=["Movies"])
+app.include_router(transcriptionRoute.router, prefix="/movie", tags=["Movies"])
 app.include_router(audioRoute.router, prefix="/audio", tags=["Audio"])
+app.include_router(transcriptionRoute.router, prefix="/audio", tags=["Audio"])
 app.include_router(imageRoute.router, prefix="/image", tags=["Image"])
 app.include_router(supportRoute.router, prefix="/support", tags=["Support"])
 

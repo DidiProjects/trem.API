@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     # Free/Pro) are rejected before reaching the app.
     MAX_REQUEST_SIZE: int = 52428800  # 50 MB
     MAX_MEDIA_REQUEST_SIZE: int = 5368709120  # 5 GB
+    # Large media is uploaded in parts so each request stays under the
+    # Cloudflare cap; abandoned uploads and unread results expire after the TTL.
+    TRANSCRIPTION_PART_SIZE: int = 52428800  # 50 MB
+    TRANSCRIPTION_TTL_SECONDS: int = 86400  # 24 h
 
     # Email
     EMAIL_SMTP_HOST: str = "smtp.gmail.com"

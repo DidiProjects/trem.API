@@ -97,38 +97,6 @@ class TestMovieCut:
         assert response.status_code == 403
 
 
-class TestMovieTranscribe:
-    def test_success_returns_transcription(self, client):
-        with patch("app.routers.videoRoute.transcribe") as tr:
-            tr.return_value = {
-                "text": "olá mundo",
-                "segments": [{"start": 0.0, "end": 1.5, "text": "olá mundo"}],
-                "language": "pt",
-                "duration": 1.5,
-            }
-            response = client.post(
-                "/movie/transcribe", files=_upload("filme.mp4"), data={"language": "pt"}
-            )
-        assert response.status_code == 200
-        assert response.json()["text"] == "olá mundo"
-
-    def test_works_without_language(self, client):
-        with patch("app.routers.videoRoute.transcribe") as tr:
-            tr.return_value = {"text": "auto", "segments": [], "language": "en", "duration": 1}
-            response = client.post("/movie/transcribe", files=_upload("filme.mp4"))
-        assert response.status_code == 200
-
-    def test_unsupported_language_returns_400(self, client):
-        response = client.post(
-            "/movie/transcribe", files=_upload("filme.mp4"), data={"language": "xx"}
-        )
-        assert response.status_code == 400
-
-    def test_requires_authentication(self, client_no_auth):
-        response = client_no_auth.post("/movie/transcribe", files=_upload("filme.mp4"))
-        assert response.status_code == 401
-
-
 # ---------------------------------------------------------------------------
 # /audio
 # ---------------------------------------------------------------------------
@@ -178,41 +146,6 @@ class TestAudioCut:
             "/audio/cut", files=_upload("musica.mp3"), data={"start": 0, "end": 10}
         )
         assert response.status_code == 403
-
-
-class TestAudioTranscribe:
-    def test_success_returns_segments(self, client):
-        with patch("app.routers.audioRoute.transcribe") as tr:
-            tr.return_value = {
-                "text": "texto",
-                "segments": [{"start": 0.0, "end": 2.0, "text": "texto"}],
-                "language": "pt",
-                "duration": 2.0,
-            }
-            response = client.post("/audio/transcribe", files=_upload("musica.mp3"))
-        assert response.status_code == 200
-        assert len(response.json()["segments"]) == 1
-
-    def test_accepts_video_file(self, client):
-        """A transcrição aceita vídeo também — extrai a trilha de áudio."""
-        with patch("app.routers.audioRoute.transcribe") as tr:
-            tr.return_value = {"text": "t", "segments": [], "language": "pt", "duration": 1}
-            response = client.post("/audio/transcribe", files=_upload("filme.mp4"))
-        assert response.status_code == 200
-
-    def test_unsupported_extension_returns_400(self, client):
-        response = client.post("/audio/transcribe", files=_upload("planilha.xlsx"))
-        assert response.status_code == 400
-
-    def test_video_without_audio_track_returns_400(self, client):
-        with patch("app.routers.audioRoute.transcribe") as tr:
-            tr.side_effect = AudioServiceError("O vídeo não possui trilha de áudio")
-            response = client.post("/audio/transcribe", files=_upload("mudo.mp4"))
-        assert response.status_code == 400
-
-    def test_requires_authentication(self, client_no_auth):
-        response = client_no_auth.post("/audio/transcribe", files=_upload("musica.mp3"))
-        assert response.status_code == 401
 
 
 # ---------------------------------------------------------------------------

@@ -7,7 +7,6 @@ import shutil
 from app.api.v1.dependencies import require_profile
 from app.domain.entities.api_client import Principal
 from app.services.videoService import cut_video, validate_cut_input, VideoServiceError
-from app.services.audioService import transcribe, validate_transcription_input, AudioServiceError
 
 router = APIRouter()
 
@@ -69,33 +68,3 @@ async def movie_cut(
         cleanup_files(temp_in_path, temp_out_path)
         raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
 
-
-@router.post("/transcribe")
-async def movie_transcribe(
-    file: UploadFile = File(...),
-    language: str = Form(None),
-    _: Principal = Depends(require_profile("file_editor"))
-):
-    """
-    Transcreve o áudio de um vídeo para texto.
-    Reutiliza o serviço de transcrição de áudio.
-    """
-    temp_path = None
-    
-    try:
-        ext = validate_transcription_input(file.filename, language)
-        
-        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp_file:
-            shutil.copyfileobj(file.file, temp_file, _COPY_CHUNK)
-            temp_path = temp_file.name
-        
-        result = transcribe(temp_path, language)
-        
-        return JSONResponse(content=result)
-    
-    except AudioServiceError as e:
-        raise HTTPException(status_code=e.status_code, detail=e.message)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro interno: {str(e)}")
-    finally:
-        cleanup_files(temp_path)

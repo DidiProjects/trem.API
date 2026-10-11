@@ -81,6 +81,10 @@ from app.infrastructure.database.models import (  # noqa: E402
     ProfileModel,
     UserModel,
 )
+from app.services.transcriptionService import (  # noqa: E402
+    TranscriptionJobs,
+    get_transcription_jobs,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -242,6 +246,21 @@ def client_no_auth():
     app.dependency_overrides[get_db] = mock_get_db
     yield TestClient(app)
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def transcription_jobs(tmp_path):
+    """Transcription jobs rooted in tmp_path, injected into the routes."""
+    jobs = TranscriptionJobs(
+        root=tmp_path / "transcriptions",
+        part_size=4,
+        max_size=1024,
+        ttl_seconds=3600,
+    )
+    app.dependency_overrides[get_transcription_jobs] = lambda: jobs
+    yield jobs
+    jobs.shutdown()
+    app.dependency_overrides.pop(get_transcription_jobs, None)
 
 
 # ---------------------------------------------------------------------------
