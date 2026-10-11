@@ -322,7 +322,9 @@ parallelism  = 4 threads
 | POST   | `/pdf/merge`          |
 | POST   | `/pdf/*`              |
 | POST   | `/movie/cut`          |
-| POST   | `/movie/transcribe`   |
+| POST   | `/movie/transcribe`, `/audio/transcribe` (job) |
+| POST/PUT/DELETE | `/movie/transcribe/uploads/*`, `/audio/transcribe/uploads/*` (upload em partes) |
+| GET    | `/movie/transcribe/jobs/{id}`, `/audio/transcribe/jobs/{id}` |
 | POST   | `/audio/*`            |
 | POST   | `/image/*`            |
 
@@ -331,6 +333,21 @@ parallelism  = 4 threads
 | Método | Path            | Descrição                              |
 |--------|-----------------|----------------------------------------|
 | GET    | `/airline/*`    | Proxy para API aérea na rede Docker    |
+
+### Transcrição — upload em partes e job em segundo plano
+
+O Cloudflare recusa corpos acima de 100 MB e respostas que levam mais de 100 s.
+Por isso a transcrição não responde na mesma requisição: o arquivo chega em
+partes de 50 MB e o resultado é consultado depois (`app/services/transcriptionService.py`).
+
+- Estado em memória (uploads e jobs), com dono = principal que criou. A API precisa
+  rodar com um único processo.
+- Um job por vez numa thread dedicada: o Whisper satura a CPU e o modelo é compartilhado.
+- Arquivos em `UPLOAD_DIR/transcriptions/{id}/`, incluindo o WAV intermediário.
+  O diretório é apagado quando o job termina (antes de o status virar `done`/`failed`),
+  quando o upload é cancelado ou expira (24 h sem atividade).
+- No startup o diretório inteiro é apagado: depois de um crash nada ali pertence a um
+  upload vivo. Uma varredura a cada 10 min remove expirados e diretórios órfãos antigos.
 
 ---
 
