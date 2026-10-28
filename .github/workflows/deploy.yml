@@ -155,8 +155,18 @@ jobs:
             -e EMAIL_SMTP_PORT="${{ vars.EMAIL_SMTP_PORT }}" \
             -e EMAIL_SMTP_USER="${{ vars.EMAIL_SMTP_USER }}" \
             -e EMAIL_SMTP_PASSWORD="${{ secrets.EMAIL_SMTP_PASSWORD }}" \
+            -e LLM_API_URL="http://trem-llm:8080" \
+            -e LLM_API_KEY="${{ secrets.LLM_API_KEY }}" \
             ghcr.io/${REPO_LOWER}:latest
-          
+
+          # ── Rede do modelo (trem-llm) ──────────────────────────────────
+          # O container e recriado a cada deploy, entao a ligacao com a rede
+          # do modelo precisa ser refeita aqui. Mesmos parametros do deploy do
+          # trem.IA, para nao depender da ordem entre os dois.
+          sudo docker network inspect trem-llm >/dev/null 2>&1 || \
+            sudo docker network create --internal trem-llm
+          sudo docker network connect trem-llm trem-api
+
           EOF
 
       # Verificação com retry
