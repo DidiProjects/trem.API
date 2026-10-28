@@ -44,6 +44,17 @@ class LlmClient:
         except Exception:
             return False
 
+    async def is_sleeping(self) -> bool:
+        # /props neither wakes the model nor resets its idle timer.
+        try:
+            async with self._client() as client:
+                resp = await client.get("/props")
+        except httpx.RequestError:
+            raise LlmApiError("LLM unavailable", status_code=503)
+        if resp.status_code != 200:
+            raise LlmApiError(f"LLM error ({resp.status_code})", status_code=502)
+        return bool(resp.json().get("is_sleeping"))
+
     async def chat(self, body: dict) -> Any:
         try:
             async with self._client() as client:
