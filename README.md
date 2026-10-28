@@ -376,6 +376,36 @@ layout: single | grouped (default: single)
 images_per_page: 1-9 (default: 4, only for grouped)
 ```
 
+### LLM Endpoints
+
+OpenAI-compatible chat completion backed by the `trem-llm` container. Synchronous and
+slow (a cold model takes minutes to load), so call it through the local port, not
+through Cloudflare. One inference runs at a time; when the queue is full the API
+answers `503` with `Retry-After`.
+
+#### Chat Completion
+```
+POST /llm/v1/chat/completions
+Content-Type: application/json
+
+{"messages": [{"role": "user", "content": "Reply with OK."}], "max_tokens": 64}
+```
+
+`stream` is forced to `false`, `model` is ignored and `max_tokens` is capped by the
+server. The llama-server response is returned as is (`choices`, `usage`, `timings`).
+
+With the OpenAI SDK, send the trem-api key as `X-API-Key` (the SDK's own Bearer is not used):
+
+```python
+OpenAI(base_url="http://localhost:13002/llm/v1", api_key="unused",
+       default_headers={"X-API-Key": "trem_..."})
+```
+
+#### LLM Health
+```
+GET /llm/health
+```
+
 ## Usage Examples
 
 ### cURL
