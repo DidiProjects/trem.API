@@ -52,6 +52,15 @@ class Settings(BaseSettings):
     AIRLINE_API_KEY: Optional[str] = None
     AIRLINE_API_TIMEOUT: int = 30
 
+    # LLM (trem-llm, internal Docker network). Callers must reach /llm without
+    # Cloudflare or nginx: a model reload after idle sleep alone takes ~3.5 min.
+    LLM_API_URL: Optional[str] = None
+    LLM_API_KEY: Optional[str] = None
+    LLM_TIMEOUT: int = 600
+    LLM_MAX_TOKENS: int = 2048
+    LLM_QUEUE_SIZE: int = 10
+    LLM_MAX_REQUEST_SIZE: int = 65536
+
     def jwt_private_key_pem(self) -> str:
         return self.JWT_PRIVATE_KEY.replace("\\n", "\n")
 

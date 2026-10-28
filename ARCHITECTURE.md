@@ -80,7 +80,8 @@ app/
 │   │   ├── connection.py        # AsyncEngine, session factory
 │   │   └── models.py            # Modelos ORM SQLAlchemy (UserModel, etc.)
 │   ├── http/
-│   │   └── airline_client.py    # Cliente HTTP p/ API aérea na rede Docker
+│   │   ├── airline_client.py    # Cliente HTTP p/ API aérea na rede Docker
+│   │   └── llm_client.py        # Cliente HTTP p/ o modelo (trem-llm)
 │   └── email/
 │       └── smtp_client.py       # Cliente SMTP reutilizável
 │
@@ -333,6 +334,29 @@ parallelism  = 4 threads
 | Método | Path            | Descrição                              |
 |--------|-----------------|----------------------------------------|
 | GET    | `/airline/*`    | Proxy para API aérea na rede Docker    |
+
+### LLM — qualquer principal autenticado
+
+| Método | Path                         | Descrição                                   |
+|--------|------------------------------|---------------------------------------------|
+| POST   | `/llm/v1/chat/completions`   | Chat no formato OpenAI, sem streaming       |
+| GET    | `/llm/health`                | Repassa o `/health` do `trem-llm`           |
+
+O modelo (gpt-oss-120b no llama-server) roda no container `trem-llm`, na rede Docker
+`trem-llm` (`--internal`, sem porta no host). A trem-api é ligada a ela no deploy e
+fala com `http://trem-llm:8080` usando `LLM_API_KEY`; nada do chamador é repassado.
+
+- Síncrono. O modelo descarrega após 15 min ocioso e a recarga leva ~3,5 min, então o
+  cliente chama pela porta local (`127.0.0.1:13002`), sem Cloudflare (corta em 100 s) nem
+  nginx (60 s). `LLM_TIMEOUT` é 600 s.
+- Uma inferência por vez (`--parallel 1`): fila em memória com até `LLM_QUEUE_SIZE`
+  requisições; acima disso, 503 com `Retry-After`. Exige processo único.
+- O servidor força `stream: false`, remove `model` e limita `max_tokens` a `LLM_MAX_TOKENS`.
+  Corpo limitado a `LLM_MAX_REQUEST_SIZE` (64 KB).
+- Sem retry: repetir uma inferência de minutos só dobra a espera.
+- Log de uma linha por requisição, só com métricas. Corpo, mensagens e resposta nunca
+  vão para log nem para `detail` de erro (CVs e vagas são dados pessoais).
+- Se o cliente desconectar, a inferência continua até o fim ocupando o modelo.
 
 ### Transcrição — upload em partes e job em segundo plano
 

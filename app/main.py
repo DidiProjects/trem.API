@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import hashlib
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -17,12 +18,21 @@ from app.core.config import get_settings
 from app.routers import (
     audioRoute,
     imageRoute,
+    llmRoute,
     pdfRoute,
     supportRoute,
     transcriptionRoute,
     videoRoute,
 )
 from app.services.transcriptionService import get_transcription_jobs, sweep_periodically
+
+# uvicorn configures only its own loggers; without a handler here, INFO lines
+# from app.* never reach the container logs.
+_app_logger = logging.getLogger("app")
+_app_logger.setLevel(logging.INFO)
+_handler = logging.StreamHandler()
+_handler.setFormatter(logging.Formatter("%(levelname)s:     %(name)s %(message)s"))
+_app_logger.addHandler(_handler)
 
 static_dir = Path(__file__).parent / "static"
 
@@ -82,6 +92,7 @@ app.add_middleware(
     limits_by_prefix={
         "/audio": get_settings().MAX_MEDIA_REQUEST_SIZE,
         "/movie": get_settings().MAX_MEDIA_REQUEST_SIZE,
+        "/llm": get_settings().LLM_MAX_REQUEST_SIZE,
     },
 )
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
@@ -99,6 +110,7 @@ app.include_router(audioRoute.router, prefix="/audio", tags=["Audio"])
 app.include_router(transcriptionRoute.router, prefix="/audio", tags=["Audio"])
 app.include_router(imageRoute.router, prefix="/image", tags=["Image"])
 app.include_router(supportRoute.router, prefix="/support", tags=["Support"])
+app.include_router(llmRoute.router, prefix="/llm", tags=["LLM"])
 
 
 @app.get("/", include_in_schema=False)
