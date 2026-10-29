@@ -173,6 +173,8 @@ jobs:
             -e EMAIL_SMTP_PASSWORD="${{ secrets.EMAIL_SMTP_PASSWORD }}" \
             -e LLM_API_URL="http://trem-llm:8080" \
             -e LLM_API_KEY="${{ secrets.LLM_API_KEY }}" \
+            -e SCRAPER_API_URL="http://linkedinho:8080" \
+            -e SCRAPER_API_KEY="${{ secrets.SCRAPER_API_KEY }}" \
             ghcr.io/${REPO_LOWER}:latest
 
           # ── Rede do modelo (trem-llm) ──────────────────────────────────
