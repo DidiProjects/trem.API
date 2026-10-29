@@ -466,7 +466,7 @@ without owner gets `403`). Jobs belong to that user, not to the key. The **Scrap
 | Method | Path | |
 |---|---|---|
 | GET, POST | `/scrapers/linkedin/jobs` | List; create from a job config (searches, criteria, schedule, recipient) |
-| GET, PATCH, DELETE | `/scrapers/linkedin/jobs/{id}` | Status (`needs_cv`, `needs_login`, `scheduled`, `paused`, `halted`); replace whole sections; delete with CV and results |
+| GET, PATCH, DELETE | `/scrapers/linkedin/jobs/{id}` | Status (`needs_cv`, `needs_login`, `scheduled`, `paused`, `halted`, `expired` after the optional `expires_on`); replace whole sections; delete with CV and results |
 | PUT | `/scrapers/linkedin/jobs/{id}/cv` | Multipart `file`, a `.docx` up to 2 MB |
 | POST | `/scrapers/linkedin/jobs/{id}/pause`, `/resume`, `/run` | `run` queues a collection ahead of the schedule |
 | GET | `/scrapers/linkedin/jobs/{id}/matches` | `min_score`, `limit` |
