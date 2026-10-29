@@ -26,6 +26,8 @@ cryptography==50.0.0
 
 # HTTP client (API aérea)
 httpx==0.28.1
+# Relays the remote LinkedIn login stream (also pulled by uvicorn[standard], pinned as used directly)
+websockets==17.3
 
 # Rate limiting
 slowapi==0.1.10

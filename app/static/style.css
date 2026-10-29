@@ -1535,6 +1535,15 @@ input[type="number"]:focus {
     flex-wrap: wrap;
 }
 
+.scr-connect {
+    padding: 0.35rem 0.9rem;
+    font-size: 0.85rem;
+}
+
+.scr-note a {
+    color: #00d9ff;
+}
+
 .scr-link {
     background: none;
     border: none;

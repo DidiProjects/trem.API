@@ -423,7 +423,20 @@ fala com `http://trem-llm:8080` usando `LLM_API_KEY`; nada do chamador é repass
   execução duas vezes não é inofensivo.
 - A aba **Scrapers** da página `/` lista os jobs com status, próxima e última execução, cria e
   edita, envia o CV, pausa/retoma/executa e mostra os matches. Atualiza sozinha a cada 30 s.
-  "Conectar LinkedIn" pela página é a próxima etapa; até lá o login é feito no servidor.
+- **Login remoto do LinkedIn.** `POST /session/login` faz o orquestrador abrir um Chromium só
+  daquele usuário, num display próprio, transmitido por x11vnc + websockify presos ao
+  localhost do container. A trem-api devolve uma URL com token de uso único (2 min,
+  `app/services/scraperLoginService.py`); abrir a URL troca o token por um cookie aleatório
+  `HttpOnly`, `SameSite=Strict`, com path restrito àquele login, e redireciona ao noVNC. Os
+  arquivos do noVNC e o WebSocket (`/scrapers/linkedin/login/{id}/...`) só aceitam esse
+  cookie; o WebSocket exige também `Origin` igual ao host. Só digests de token e cookie ficam
+  em memória (processo único).
+- A senha vai do teclado da pessoa para a página do LinkedIn naquele navegador: os quadros do
+  VNC passam pela trem-api, mas nada os lê nem os grava. A confiança é no operador do servidor,
+  como em qualquer navegador remoto.
+- O login segura a trava do dono (nunca divide o perfil com uma coleta), dura no máximo 10 min
+  e no máximo 2 rodam ao mesmo tempo. Em produção o nginx precisa repassar `Upgrade`/`Connection`
+  em `/scrapers/linkedin/login/`.
 
 ### Transcrição — upload em partes e job em segundo plano
 

@@ -917,13 +917,16 @@ For specific formats, adjustments may be necessary.</pre>
                     <div class="scr-session">
                         <span class="scr-dot" id="scrSessionDot"></span>
                         <span id="scrSessionLabel">checking…</span>
+                        <button type="button" class="btn-secondary scr-connect hidden" id="scrConnect">Connect LinkedIn</button>
                         <button type="button" class="scr-link hidden" id="scrDisconnect">Disconnect</button>
                     </div>
                 </div>
                 <p class="scr-note hidden" id="scrLoginNote">
-                    Connecting LinkedIn from this page comes next. Until then an admin logs you in on the
-                    server, and your jobs start on their own once the session is there.
+                    Your jobs wait for a LinkedIn session. <strong>Connect LinkedIn</strong> opens a private
+                    browser in a new tab: log in there as usual, 2FA included. Your password goes straight
+                    to LinkedIn and is never stored; once the feed shows up the tab can be closed.
                 </p>
+                <p class="scr-note hidden" id="scrLoginProgress"></p>
 
                 <div class="scr-toolbar">
                     <button type="button" class="btn-primary" id="scrNew">+ New job</button>

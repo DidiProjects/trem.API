@@ -471,6 +471,16 @@ without owner gets `403`). Jobs belong to that user, not to the key. The **Scrap
 | POST | `/scrapers/linkedin/jobs/{id}/pause`, `/resume`, `/run` | `run` queues a collection ahead of the schedule |
 | GET | `/scrapers/linkedin/jobs/{id}/matches` | `min_score`, `limit` |
 | GET, DELETE | `/scrapers/linkedin/session` | LinkedIn session: `none`, `valid`, `expired` |
+| POST | `/scrapers/linkedin/session/login` | Opens a remote browser on the LinkedIn login; answers a one-time `url` |
+| GET, DELETE | `/scrapers/linkedin/session/login/{id}` | `starting`, `waiting`, `connected`, `failed`, `expired`, `cancelled`; cancel |
+
+**Connect LinkedIn** (the tab, or `POST .../session/login`) opens a private Chromium on the
+LinkedIn login on the server and returns a `url`, valid once for 2 minutes. Opening it trades
+the token for a cookie scoped to that login, and shows the browser through noVNC: the page and
+its WebSocket go browser → trem-api → orchestrator. The person types their password and 2FA on
+LinkedIn's page; nothing in between reads or stores it. Once the feed shows up the session is
+saved and the jobs start. A login lasts at most 10 minutes. Behind nginx, `/scrapers/linkedin/login/`
+needs WebSocket upgrade headers.
 
 The job config format and limits are in the linkedinho README. Validation errors come back as
 `422` with the orchestrator's detail; an orchestrator failure is `502`, unreachable `503`.

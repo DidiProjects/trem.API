@@ -1229,7 +1229,14 @@ const SCR_SESSION = {
     none: ['LinkedIn not connected', 'warn']
 };
 
-const scr = { jobs: [], editing: null, cvTarget: null, matchesJob: null, visible: false, busy: false };
+const scr = { jobs: [], editing: null, cvTarget: null, matchesJob: null, visible: false, busy: false, login: null };
+const SCR_LOGIN_POLL_MS = 3000;
+const SCR_LOGIN_DONE = {
+    connected: ['LinkedIn connected. Your jobs start on their own.', 'success'],
+    expired: ['The LinkedIn login timed out after 10 minutes. Try again.', 'error'],
+    cancelled: ['LinkedIn login cancelled.', 'success'],
+    failed: ['The LinkedIn login failed. Try again.', 'error']
+};
 
 function setupScrapers() {
     document.getElementById('scrDays').innerHTML = SCR_DAYS
@@ -1247,6 +1254,7 @@ function setupScrapers() {
     });
     document.getElementById('scrOnlyRelevant').addEventListener('change', () => scrShowMatches(scr.matchesJob));
     document.getElementById('scrDisconnect').addEventListener('click', scrDisconnect);
+    document.getElementById('scrConnect').addEventListener('click', scrConnect);
     document.getElementById('apiKey').addEventListener('change', () => { if (scr.visible) scrLoad(); });
     document.addEventListener('sectionchange', e => {
         scr.visible = e.detail === 'scrapers';
@@ -1310,7 +1318,10 @@ function scrRenderSession(state) {
     document.getElementById('scrSessionLabel').textContent = label;
     document.getElementById('scrSessionDot').className = `scr-dot ${tone}`;
     document.getElementById('scrDisconnect').classList.toggle('hidden', !state || state === 'none');
-    document.getElementById('scrLoginNote').classList.toggle('hidden', !state || state === 'valid');
+    const connect = document.getElementById('scrConnect');
+    connect.classList.toggle('hidden', !state || Boolean(scr.login));
+    connect.textContent = state === 'valid' ? 'Reconnect' : 'Connect LinkedIn';
+    document.getElementById('scrLoginNote').classList.toggle('hidden', !state || state === 'valid' || Boolean(scr.login));
 }
 
 function scrRenderJobs(jobs, message) {
@@ -1542,4 +1553,59 @@ function scrMatchesTable(matches) {
 async function scrDisconnect() {
     if (!confirm('Disconnect LinkedIn? Your jobs wait until you log in again.')) return;
     await scrRun(() => scrFetch('/session', { method: 'DELETE' }), 'LinkedIn disconnected');
+}
+
+async function scrConnect() {
+    // Opened in the click itself: a tab opened after an await is taken for a popup and blocked.
+    const tab = window.open('about:blank', '_blank');
+    try {
+        const login = await scrFetch('/session/login', { method: 'POST' });
+        if (tab) tab.location = login.url;
+        scr.login = login;
+        scrLoginProgress(tab ? null : login.url);
+        scrPollLogin();
+    } catch (error) {
+        if (tab) tab.close();
+        showToast(error.message, 'error');
+    }
+}
+
+function scrLoginProgress(url) {
+    const box = document.getElementById('scrLoginProgress');
+    box.innerHTML = url
+        ? `The browser blocked the new tab. <a href="${aiEscape(url)}" target="_blank" rel="noopener">Open the LinkedIn login</a>.`
+        : 'Waiting for you to log in to LinkedIn in the other tab… <button type="button" class="scr-link" id="scrCancelLogin">Cancel</button>';
+    box.classList.remove('hidden');
+    document.getElementById('scrLoginNote').classList.add('hidden');
+    document.getElementById('scrConnect').classList.add('hidden');
+    const cancel = document.getElementById('scrCancelLogin');
+    if (cancel) cancel.addEventListener('click', scrCancelLogin);
+}
+
+async function scrPollLogin() {
+    while (scr.login) {
+        await sleep(SCR_LOGIN_POLL_MS);
+        if (!scr.login) return;
+        let state;
+        try {
+            state = await scrFetch(`/session/login/${scr.login.id}`);
+        } catch (error) {
+            continue;  // a blip in the connection is not the end of the login
+        }
+        if (state.status === 'starting' || state.status === 'waiting') continue;
+        const [message, type] = SCR_LOGIN_DONE[state.status] || ['LinkedIn login finished.', 'success'];
+        scr.login = null;
+        document.getElementById('scrLoginProgress').classList.add('hidden');
+        showToast(message, type);
+        await scrLoad();
+    }
+}
+
+async function scrCancelLogin() {
+    if (!scr.login) return;
+    try {
+        await scrFetch(`/session/login/${scr.login.id}`, { method: 'DELETE' });
+    } catch (error) {
+        showToast(error.message, 'error');
+    }
 }
