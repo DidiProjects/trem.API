@@ -52,8 +52,9 @@ class Settings(BaseSettings):
     AIRLINE_API_KEY: Optional[str] = None
     AIRLINE_API_TIMEOUT: int = 30
 
-    # LLM (trem-llm, internal Docker network). Callers must reach /llm without
-    # Cloudflare or nginx: a model reload after idle sleep alone takes ~3.5 min.
+    # LLM (trem-llm, internal Docker network). The synchronous endpoint must be
+    # reached without Cloudflare or nginx (100 s / 60 s); over the public URL,
+    # use /llm/jobs. A model reload after idle sleep alone takes ~3.5 min.
     LLM_API_URL: Optional[str] = None
     LLM_API_KEY: Optional[str] = None
     LLM_TIMEOUT: int = 600
@@ -61,6 +62,7 @@ class Settings(BaseSettings):
     LLM_QUEUE_SIZE: int = 10
     LLM_MAX_REQUEST_SIZE: int = 65536
     LLM_WARMUP_SECONDS: int = 210  # measured cold reload, model file out of page cache
+    LLM_JOB_TTL_SECONDS: int = 3600  # finished jobs hold personal data; poll within 1 h
 
     def jwt_private_key_pem(self) -> str:
         return self.JWT_PRIVATE_KEY.replace("\\n", "\n")
