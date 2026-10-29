@@ -1002,9 +1002,16 @@ For specific formats, adjustments may be necessary.</pre>
                             </select>
                         </div>
                     </div>
-                    <div class="form-group">
-                        <label for="scrNotify">Email matches to</label>
-                        <input type="email" id="scrNotify" required placeholder="you@example.com">
+                    <div class="scr-grid">
+                        <div class="form-group">
+                            <label for="scrNotify">Email matches to</label>
+                            <input type="email" id="scrNotify" required placeholder="you@example.com">
+                        </div>
+                        <div class="form-group">
+                            <label for="scrExpires">Runs until</label>
+                            <input type="date" id="scrExpires">
+                            <small>Optional. After this day the job stops; clear it to keep running</small>
+                        </div>
                     </div>
                     <div class="form-group" id="scrCvGroup">
                         <label for="scrCv">CV (.docx)</label>

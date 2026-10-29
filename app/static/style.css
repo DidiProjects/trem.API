@@ -1671,6 +1671,7 @@ input[type="number"]:focus {
 }
 
 .scr-form input[type="email"],
+.scr-form input[type="date"],
 .scr-form textarea,
 .scr-form select {
     width: 100%;
@@ -1693,6 +1694,7 @@ input[type="number"]:focus {
 }
 
 .scr-form input[type="email"]:focus,
+.scr-form input[type="date"]:focus,
 .scr-form textarea:focus,
 .scr-form select:focus {
     outline: none;

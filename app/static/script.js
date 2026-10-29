@@ -1220,7 +1220,8 @@ const SCR_STATUS = {
     needs_cv: ['Needs a CV', 'warn'],
     needs_login: ['Waiting for LinkedIn login', 'warn'],
     paused: ['Paused', 'idle'],
-    halted: ['Stopped', 'error']
+    halted: ['Stopped', 'error'],
+    expired: ['Expired', 'idle']
 };
 const SCR_SESSION = {
     valid: ['LinkedIn connected', 'ok'],
@@ -1331,7 +1332,8 @@ function scrJobHtml(job) {
         ? `Last run ${scrWhen(run.started_at)} · ${run.collected} new${run.error ? ` · ${aiEscape(run.error)}` : ''}`
         : 'Not run yet';
     const searches = c.jobs.keywords.length + c.posts.keywords.length;
-    const active = job.state === 'active';
+    const active = job.state === 'active' && job.status !== 'expired';
+    const until = c.expires_on ? ` · until ${aiEscape(new Date(c.expires_on + 'T00:00').toLocaleDateString())}` : '';
     const waiting = job.pending_items ? ` · ${job.pending_items} waiting for the model` : '';
     return `
         <div class="scr-job" data-id="${aiEscape(job.id)}">
@@ -1342,13 +1344,13 @@ function scrJobHtml(job) {
             ${job.halt_reason ? `<p class="scr-job-alert">${aiEscape(job.halt_reason)}</p>` : ''}
             <div class="scr-job-meta">
                 <span>${searches} search${searches === 1 ? '' : 'es'} · ${aiEscape(c.jobs.locations.join(', '))}</span>
-                <span>${aiEscape(c.schedule.days.join(' '))} at ${aiEscape(c.schedule.times.join(', '))} (${aiEscape(c.schedule.timezone)})</span>
+                <span>${aiEscape(c.schedule.days.join(' '))} at ${aiEscape(c.schedule.times.join(', '))} (${aiEscape(c.schedule.timezone)})${until}</span>
                 <span>${active ? `Next run ${scrWhen(job.next_run_at)}${job.run_requested ? ' · run queued' : ''}` : 'Not scheduled'}</span>
                 <span>${last}${waiting}</span>
             </div>
             <div class="scr-job-actions">
                 <button type="button" class="scr-btn" data-action="run" ${active && !job.run_requested ? '' : 'disabled'}>Run now</button>
-                <button type="button" class="scr-btn" data-action="${active ? 'pause' : 'resume'}">${active ? 'Pause' : 'Resume'}</button>
+                <button type="button" class="scr-btn" data-action="${job.state === 'active' ? 'pause' : 'resume'}">${job.state === 'active' ? 'Pause' : 'Resume'}</button>
                 <button type="button" class="scr-btn" data-action="matches">Matches</button>
                 <button type="button" class="scr-btn" data-action="cv">${job.has_cv ? 'Replace CV' : 'Upload CV'}</button>
                 <button type="button" class="scr-btn" data-action="edit">Edit</button>
@@ -1428,6 +1430,7 @@ function scrOpenForm(job) {
     set('scrTimes', c ? c.schedule.times.join(', ') : '07:00, 13:00, 19:00');
     set('scrTimezone', c ? c.schedule.timezone : Intl.DateTimeFormat().resolvedOptions().timeZone);
     set('scrNotify', c ? c.notify_to : '');
+    set('scrExpires', c && c.expires_on ? c.expires_on : '');
     const days = c ? c.schedule.days : SCR_DAYS.slice(0, 5);
     document.querySelectorAll('#scrDays input').forEach(box => { box.checked = days.includes(box.value); });
     set('scrCv', '');
@@ -1462,7 +1465,8 @@ function scrFormConfig() {
             days: [...document.querySelectorAll('#scrDays input:checked')].map(box => box.value),
             times: value('scrTimes').split(',').map(s => s.trim()).filter(Boolean)
         },
-        notify_to: value('scrNotify')
+        notify_to: value('scrNotify'),
+        expires_on: value('scrExpires') || null
     };
 }
 
