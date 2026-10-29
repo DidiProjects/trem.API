@@ -4,6 +4,7 @@ Testes das rotas /llm, com o llama-server substituído por httpx.MockTransport.
 import asyncio
 import json
 import logging
+import time
 from unittest.mock import patch
 
 import httpx
@@ -39,11 +40,21 @@ CHAT = {"messages": [{"role": "user", "content": "Reply with OK."}]}
 
 
 class Upstream:
+    """/props is answered apart, so `requests` holds only chat and health calls."""
+
     def __init__(self):
         self.requests: list[httpx.Request] = []
         self.handler = lambda request: httpx.Response(200, json=COMPLETION)
+        self.sleeping = False
+        self.props_calls = 0
+        self.props_handler = None
 
     async def __call__(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/props":
+            self.props_calls += 1
+            if self.props_handler:
+                return self.props_handler(request)
+            return httpx.Response(200, json={"is_sleeping": self.sleeping})
         self.requests.append(request)
         response = self.handler(request)
         if asyncio.iscoroutine(response):
@@ -84,6 +95,7 @@ def upstream(settings, monkeypatch):
 
     monkeypatch.setattr(LlmClient, "_client", _client)
     monkeypatch.setattr(llmRoute, "_queue", llmRoute.LlmQueue())
+    monkeypatch.setattr(llmRoute, "_warmup", llmRoute.LlmWarmup())
     with patch("app.infrastructure.http.llm_client.get_settings", return_value=settings), \
             patch("app.routers.llmRoute.get_settings", return_value=settings):
         yield fake
@@ -275,3 +287,111 @@ class TestHealth:
 
         upstream.handler = handler
         assert client.get("/llm/health").status_code == 503
+
+    def test_reports_sleeping_without_waking(self, client, upstream):
+        upstream.sleeping = True
+        assert client.get("/llm/health").json() == {"status": "sleeping"}
+        assert [r.url.path for r in upstream.requests] == ["/health"]
+        assert not llmRoute._warmup.in_progress
+
+    def test_reports_warming_up(self, client, upstream):
+        llmRoute._warmup._since = time.monotonic()
+        assert client.get("/llm/health").json() == {"status": "warming_up"}
+        assert upstream.props_calls == 0
+
+
+class TestWarmup:
+    async def test_awake_model_follows_normal_flow(self, async_client, upstream):
+        response = await async_client.post("/llm/v1/chat/completions", json=CHAT)
+        assert response.status_code == 200
+        assert upstream.props_calls == 1
+
+    async def test_sleeping_model_answers_warming_up_and_wakes_once(
+        self, async_client, upstream
+    ):
+        upstream.sleeping = True
+        release = asyncio.Event()
+
+        async def wake(request):
+            await release.wait()
+            return httpx.Response(200, json=COMPLETION)
+
+        upstream.handler = wake
+        first = await async_client.post("/llm/v1/chat/completions", json=CHAT)
+        await asyncio.sleep(0.05)
+
+        assert first.status_code == 503
+        assert first.json()["status"] == "warming_up"
+        assert first.headers["retry-after"] == str(first.json()["eta_seconds"])
+        assert len(upstream.requests) == 1
+        assert upstream.last_body()["max_tokens"] == 1
+
+        llmRoute._warmup._since -= 100
+        second = await async_client.post("/llm/v1/chat/completions", json=CHAT)
+        assert second.status_code == 503
+        assert second.json()["eta_seconds"] < first.json()["eta_seconds"]
+        assert len(upstream.requests) == 1
+        assert upstream.props_calls == 1
+
+        release.set()
+        await llmRoute._warmup._task
+        assert not llmRoute._warmup.in_progress
+
+        upstream.sleeping = False
+        upstream.handler = lambda r: httpx.Response(200, json=COMPLETION)
+        third = await async_client.post("/llm/v1/chat/completions", json=CHAT)
+        assert third.status_code == 200
+        assert upstream.props_calls == 2
+
+    async def test_failed_wake_clears_state(self, async_client, upstream, caplog):
+        upstream.sleeping = True
+        upstream.handler = lambda r: httpx.Response(500, text=SENTINEL)
+        caplog.set_level(logging.DEBUG)
+
+        response = await async_client.post("/llm/v1/chat/completions", json=CHAT)
+        assert response.status_code == 503
+        await llmRoute._warmup._task
+
+        assert not llmRoute._warmup.in_progress
+        assert "llm warmup failed status=502" in caplog.text
+        assert SENTINEL not in caplog.text
+
+    @pytest.mark.parametrize(
+        "props, expected",
+        [
+            (lambda r: (_ for _ in ()).throw(httpx.ConnectError("refused")), 503),
+            (lambda r: httpx.Response(500), 502),
+        ],
+    )
+    def test_props_errors(self, client, upstream, props, expected):
+        upstream.props_handler = props
+        assert client.post("/llm/v1/chat/completions", json=CHAT).status_code == expected
+        assert upstream.requests == []
+
+    def test_logs_warming_up_without_content(self, client, upstream, caplog):
+        upstream.sleeping = True
+        caplog.set_level(logging.DEBUG)
+        payload = {"messages": [{"role": "user", "content": SENTINEL}]}
+        assert client.post("/llm/v1/chat/completions", json=payload).status_code == 503
+
+        lines = [r.getMessage() for r in caplog.records if r.name == "app.routers.llmRoute"]
+        assert any("llm request" in line and "status=503" in line for line in lines)
+        assert SENTINEL not in caplog.text
+
+
+class TestWarmupEstimate:
+    def test_just_started(self):
+        warmup = llmRoute.LlmWarmup()
+        warmup._since = time.monotonic()
+        body = json.loads(warmup.response(210).body)
+        assert body["eta_seconds"] in (209, 210)
+        assert body["progress"] == 0.0
+
+    def test_overdue(self):
+        warmup = llmRoute.LlmWarmup()
+        warmup._since = time.monotonic() - 1000
+        response = warmup.response(210)
+        body = json.loads(response.body)
+        assert body["eta_seconds"] == 15
+        assert response.headers["retry-after"] == "15"
+        assert body["progress"] == 0.95

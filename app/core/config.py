@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     LLM_MAX_TOKENS: int = 2048
     LLM_QUEUE_SIZE: int = 10
     LLM_MAX_REQUEST_SIZE: int = 65536
+    LLM_WARMUP_SECONDS: int = 210  # measured cold reload, model file out of page cache
 
     def jwt_private_key_pem(self) -> str:
         return self.JWT_PRIVATE_KEY.replace("\\n", "\n")

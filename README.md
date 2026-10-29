@@ -394,6 +394,16 @@ Content-Type: application/json
 `stream` is forced to `false`, `model` is ignored and `max_tokens` is capped by the
 server. The llama-server response is returned as is (`choices`, `usage`, `timings`).
 
+The model sleeps after 15 min idle. A call to a sleeping model gets an immediate `503`
+and the API starts waking it; retry after `Retry-After` seconds:
+
+```json
+{"status": "warming_up", "detail": "Model is waking up, retry after the indicated time",
+ "elapsed_seconds": 40, "eta_seconds": 170, "progress": 0.19}
+```
+
+`eta_seconds` and `progress` are estimates from the measured reload time.
+
 With the OpenAI SDK, send the trem-api key as `X-API-Key` (the SDK's own Bearer is not used):
 
 ```python
@@ -405,6 +415,9 @@ OpenAI(base_url="http://localhost:13002/llm/v1", api_key="unused",
 ```
 GET /llm/health
 ```
+
+Returns `{"status": "healthy" | "sleeping" | "warming_up"}` without waking the model,
+or `503` when the model server is unreachable.
 
 ## Usage Examples
 

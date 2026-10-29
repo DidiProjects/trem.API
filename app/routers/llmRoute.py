@@ -47,6 +47,57 @@ class LlmQueue:
 
 _queue = LlmQueue()
 
+_WAKE_BODY = {"messages": [{"role": "user", "content": "ping"}], "max_tokens": 1, "stream": False}
+
+
+class LlmWarmup:
+    """
+    Answers "warming up" instead of holding the connection while trem-llm
+    reloads after --sleep-idle-seconds, which otherwise ends in 504/524 and
+    blind retries. llama-server exposes the sleeping state but not the load
+    progress, so eta/progress are estimates from the measured reload time.
+    """
+
+    def __init__(self):
+        self._since: float | None = None
+        self._task: asyncio.Task | None = None  # kept so the task is not garbage collected
+
+    @property
+    def in_progress(self) -> bool:
+        return self._since is not None
+
+    def start(self) -> None:
+        if self.in_progress:
+            return
+        self._since = time.monotonic()
+        self._task = asyncio.create_task(self._wake())
+
+    async def _wake(self) -> None:
+        try:
+            await LlmClient().chat(_WAKE_BODY)
+        except LlmApiError as e:
+            logger.warning("llm warmup failed status=%d", e.status_code)
+        finally:
+            self._since = None
+
+    def response(self, expected_seconds: int) -> JSONResponse:
+        elapsed = time.monotonic() - (self._since or time.monotonic())
+        eta = int(max(expected_seconds - elapsed, 15))  # never tell the client "0"
+        return JSONResponse(
+            status_code=503,
+            headers={"Retry-After": str(eta)},
+            content={
+                "status": "warming_up",
+                "detail": "Model is waking up, retry after the indicated time",
+                "elapsed_seconds": int(elapsed),
+                "eta_seconds": eta,
+                "progress": round(min(elapsed / expected_seconds, 0.95), 2),
+            },
+        )
+
+
+_warmup = LlmWarmup()
+
 
 def _sanitize(body: dict, max_tokens: int) -> dict:
     body = dict(body)
@@ -86,8 +137,13 @@ async def chat_completions(
     status = 500
     result = None
     try:
+        client = LlmClient()
+        if _warmup.in_progress or await client.is_sleeping():
+            _warmup.start()
+            status = 503
+            return _warmup.response(settings.LLM_WARMUP_SECONDS)
         async with _queue.turn(settings.LLM_QUEUE_SIZE):
-            result = await LlmClient().chat(_sanitize(body, settings.LLM_MAX_TOKENS))
+            result = await client.chat(_sanitize(body, settings.LLM_MAX_TOKENS))
         status = 200
         return JSONResponse(content=result)
     except LlmApiError as e:
@@ -114,9 +170,11 @@ async def chat_completions(
 @router.get("/health")
 async def llm_health(_: Principal = Depends(get_current_principal)):
     try:
-        healthy = await LlmClient().health_check()
+        client = LlmClient()
+        if not await client.health_check():
+            raise HTTPException(status_code=503, detail="LLM unavailable")
+        if _warmup.in_progress:
+            return {"status": "warming_up"}
+        return {"status": "sleeping" if await client.is_sleeping() else "healthy"}
     except LlmApiError as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)
-    if not healthy:
-        raise HTTPException(status_code=503, detail="LLM unavailable")
-    return {"status": "healthy"}

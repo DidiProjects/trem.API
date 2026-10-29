@@ -357,6 +357,11 @@ fala com `http://trem-llm:8080` usando `LLM_API_KEY`; nada do chamador é repass
 - Log de uma linha por requisição, só com métricas. Corpo, mensagens e resposta nunca
   vão para log nem para `detail` de erro (CVs e vagas são dados pessoais).
 - Se o cliente desconectar, a inferência continua até o fim ocupando o modelo.
+- Modelo dormindo (`GET /props` → `is_sleeping`): a chamada recebe na hora `503`
+  `warming_up` com `Retry-After`, e a API dispara uma única chamada para acordá-lo.
+  O llama-server não informa o progresso da carga, então `eta_seconds` e `progress`
+  são estimados a partir de `LLM_WARMUP_SECONDS` (recarga medida, 210 s).
+  `/llm/health` responde `healthy`, `sleeping` ou `warming_up` sem acordar o modelo.
 
 ### Transcrição — upload em partes e job em segundo plano
 
