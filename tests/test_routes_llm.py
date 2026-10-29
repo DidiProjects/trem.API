@@ -96,6 +96,7 @@ def upstream(settings, monkeypatch):
     monkeypatch.setattr(LlmClient, "_client", _client)
     monkeypatch.setattr(llmRoute, "_queue", llmRoute.LlmQueue())
     monkeypatch.setattr(llmRoute, "_warmup", llmRoute.LlmWarmup())
+    monkeypatch.setattr(llmRoute, "_jobs", llmRoute.LlmJobs())
     with patch("app.infrastructure.http.llm_client.get_settings", return_value=settings), \
             patch("app.routers.llmRoute.get_settings", return_value=settings):
         yield fake
@@ -395,3 +396,160 @@ class TestWarmupEstimate:
         assert body["eta_seconds"] == 15
         assert response.headers["retry-after"] == "15"
         assert body["progress"] == 0.95
+
+
+async def _finish_jobs():
+    await asyncio.gather(*llmRoute._jobs._tasks)
+
+
+class TestJobs:
+    def test_requires_credentials(self, client_no_auth, upstream):
+        assert client_no_auth.post("/llm/jobs", json=CHAT).status_code == 401
+        assert client_no_auth.get("/llm/jobs/abc").status_code == 401
+
+    async def test_submit_then_poll_result(self, async_client, upstream):
+        release = asyncio.Event()
+
+        async def slow(request):
+            await release.wait()
+            return httpx.Response(200, json=COMPLETION)
+
+        upstream.handler = slow
+        submitted = await async_client.post("/llm/jobs", json={**CHAT, "stream": True})
+        assert submitted.status_code == 202
+        job_id = submitted.json()["job_id"]
+        assert submitted.json()["status"] == "queued"
+
+        await asyncio.sleep(0.05)
+        running = await async_client.get(f"/llm/jobs/{job_id}")
+        assert running.json() == {"job_id": job_id, "status": "running"}
+
+        release.set()
+        await _finish_jobs()
+        done = await async_client.get(f"/llm/jobs/{job_id}")
+        assert done.json() == {"job_id": job_id, "status": "done", "result": COMPLETION}
+        assert upstream.last_body()["stream"] is False
+        assert upstream.last_body()["max_tokens"] == 2048
+
+    async def test_upstream_error_fails_job(self, async_client, upstream):
+        upstream.handler = lambda r: httpx.Response(
+            400, json={"error": {"message": "context too long"}}
+        )
+        job_id = (await async_client.post("/llm/jobs", json=CHAT)).json()["job_id"]
+        await _finish_jobs()
+        body = (await async_client.get(f"/llm/jobs/{job_id}")).json()
+        assert body == {"job_id": job_id, "status": "failed", "error": "context too long"}
+
+    async def test_unexpected_error_fails_job_without_content(
+        self, async_client, upstream, caplog
+    ):
+        upstream.handler = lambda r: httpx.Response(200, text=SENTINEL)  # not JSON
+        caplog.set_level(logging.DEBUG)
+        job_id = (await async_client.post("/llm/jobs", json=CHAT)).json()["job_id"]
+        await _finish_jobs()
+        body = (await async_client.get(f"/llm/jobs/{job_id}")).json()
+        assert body["status"] == "failed"
+        assert body["error"] == "LLM job failed"
+        assert SENTINEL not in caplog.text
+
+    async def test_sleeping_model_is_woken_inside_the_job(self, async_client, upstream):
+        upstream.sleeping = True
+        release = asyncio.Event()
+
+        async def wake_then_answer(request):
+            if request.url.path == "/health":
+                return httpx.Response(200)
+            if json.loads(request.content)["max_tokens"] == 1:
+                await release.wait()
+            return httpx.Response(200, json=COMPLETION)
+
+        upstream.handler = wake_then_answer
+        submitted = await async_client.post("/llm/jobs", json=CHAT)
+        assert submitted.status_code == 202
+        await asyncio.sleep(0.05)
+        assert llmRoute._warmup.in_progress
+        assert (await async_client.get("/llm/health")).json() == {"status": "warming_up"}
+
+        release.set()
+        await _finish_jobs()
+        job_id = submitted.json()["job_id"]
+        assert (await async_client.get(f"/llm/jobs/{job_id}")).json()["status"] == "done"
+        chats = [r for r in upstream.requests if r.url.path == "/v1/chat/completions"]
+        assert [json.loads(r.content)["max_tokens"] for r in chats] == [1, 2048]
+
+    async def test_jobs_and_sync_calls_share_the_queue(self, async_client, upstream):
+        release = asyncio.Event()
+        in_flight = 0
+        peak = 0
+
+        async def slow(request):
+            nonlocal in_flight, peak
+            in_flight += 1
+            peak = max(peak, in_flight)
+            await release.wait()
+            in_flight -= 1
+            return httpx.Response(200, json=COMPLETION)
+
+        upstream.handler = slow
+        await async_client.post("/llm/jobs", json=CHAT)
+        sync = asyncio.create_task(async_client.post("/llm/v1/chat/completions", json=CHAT))
+        await asyncio.sleep(0.1)
+        assert len(upstream.requests) == 1
+        release.set()
+        assert (await sync).status_code == 200
+        await _finish_jobs()
+        assert peak == 1
+
+    async def test_full_queue_rejects_submit(self, async_client, upstream, settings):
+        settings.LLM_QUEUE_SIZE = 1
+        release = asyncio.Event()
+
+        async def slow(request):
+            await release.wait()
+            return httpx.Response(200, json=COMPLETION)
+
+        upstream.handler = slow
+        assert (await async_client.post("/llm/jobs", json=CHAT)).status_code == 202
+        rejected = await async_client.post("/llm/jobs", json=CHAT)
+        assert rejected.status_code == 503
+        assert rejected.headers["retry-after"] == "60"
+        release.set()
+        await _finish_jobs()
+        assert llmRoute._queue._waiting == 0
+
+    async def test_other_principal_cannot_read(self, async_client, upstream):
+        job_id = (await async_client.post("/llm/jobs", json=CHAT)).json()["job_id"]
+        await _finish_jobs()
+        llmRoute._jobs._jobs[job_id].owner_id = "someone-else"
+        assert (await async_client.get(f"/llm/jobs/{job_id}")).status_code == 404
+
+    def test_unknown_job_is_404(self, client, upstream):
+        assert client.get("/llm/jobs/nope").status_code == 404
+
+    def test_unconfigured_url(self, client, upstream):
+        with patch(
+            "app.infrastructure.http.llm_client.get_settings",
+            return_value=_settings_with(LLM_API_URL=None),
+        ):
+            assert client.post("/llm/jobs", json=CHAT).status_code == 503
+        assert llmRoute._jobs._jobs == {}
+
+    def test_body_over_limit_is_413(self, client, upstream):
+        big = {"messages": [{"role": "user", "content": "x" * 70000}]}
+        assert client.post("/llm/jobs", json=big).status_code == 413
+        assert llmRoute._jobs._jobs == {}
+
+    async def test_finished_jobs_expire(self, async_client, upstream):
+        job_id = (await async_client.post("/llm/jobs", json=CHAT)).json()["job_id"]
+        await _finish_jobs()
+        llmRoute._jobs._jobs[job_id].finished_at -= 3601
+        assert (await async_client.get(f"/llm/jobs/{job_id}")).status_code == 404
+
+    async def test_logs_job_metrics_never_content(self, async_client, upstream, caplog):
+        caplog.set_level(logging.DEBUG)
+        payload = {"messages": [{"role": "user", "content": SENTINEL}]}
+        await async_client.post("/llm/jobs", json=payload)
+        await _finish_jobs()
+        lines = [r.getMessage() for r in caplog.records if r.name == "app.routers.llmRoute"]
+        assert any(line.startswith("llm job ") and "status=200" in line for line in lines)
+        assert SENTINEL not in caplog.text
