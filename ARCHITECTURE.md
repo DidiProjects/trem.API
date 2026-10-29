@@ -370,6 +370,10 @@ fala com `http://trem-llm:8080` usando `LLM_API_KEY`; nada do chamador é repass
   Com o modelo dormindo, o job espera o aquecimento em vez de responder 503. Job
   terminado guarda o resultado (dado pessoal) por `LLM_JOB_TTL_SECONDS` (1 h); jobs se
   perdem se o processo reiniciar.
+- A aba **AI** da página `/` é um chat sobre os jobs: mostra o estado do modelo e o
+  aquecimento (barra estimada por `LLM_WARMUP_SECONDS`), começa a acordá-lo quando o
+  usuário digita, e retoma o polling de respostas pendentes após recarregar a página.
+  O histórico fica só no `localStorage` do navegador.
 
 ### Transcrição — upload em partes e job em segundo plano
 

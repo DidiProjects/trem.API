@@ -30,6 +30,7 @@
             <button class="main-tab" data-section="image">Image</button>
             <button class="main-tab" data-section="movies">Movies</button>
             <button class="main-tab" data-section="audio">Audio</button>
+            <button class="main-tab" data-section="ai">AI</button>
             <button class="main-tab" data-section="others">Others</button>
         </div>
 
@@ -39,6 +40,7 @@
                 <option value="image">Image</option>
                 <option value="movies">Movies</option>
                 <option value="audio">Audio</option>
+                <option value="ai">AI</option>
                 <option value="others">Others</option>
             </select>
         </div>
@@ -860,6 +862,46 @@ For specific formats, adjustments may be necessary.</pre>
                         </div>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <div class="section-content" id="section-ai">
+            <div class="ai-shell">
+                <aside class="ai-sidebar" id="aiSidebar">
+                    <button type="button" class="ai-new-chat" id="aiNewChat">+ New chat</button>
+                    <ul class="ai-chat-list" id="aiChatList"></ul>
+                </aside>
+
+                <section class="ai-main">
+                    <div class="ai-topbar">
+                        <button type="button" class="ai-icon-btn ai-sidebar-toggle" id="aiSidebarToggle" title="Chats">☰</button>
+                        <div class="ai-model">
+                            <span class="ai-status-dot" id="aiStatusDot"></span>
+                            <span class="ai-model-name">gpt-oss-120b</span>
+                            <span class="ai-status-label" id="aiStatusLabel">checking…</span>
+                        </div>
+                        <button type="button" class="ai-icon-btn" id="aiDeleteChat" title="Delete chat">🗑</button>
+                    </div>
+
+                    <div class="ai-warmup hidden" id="aiWarmup">
+                        <div class="ai-warmup-text">
+                            <span id="aiWarmupText"></span>
+                            <button type="button" class="ai-link-btn" id="aiWakeBtn">Wake it now</button>
+                        </div>
+                        <div class="ai-progress"><div class="ai-progress-bar" id="aiWarmupBar"></div></div>
+                    </div>
+
+                    <div class="ai-messages" id="aiMessages"></div>
+
+                    <form class="ai-composer" id="aiComposer">
+                        <textarea id="aiInput" rows="1" placeholder="Message gpt-oss-120b…"></textarea>
+                        <button type="submit" class="ai-send" id="aiSend" title="Send (Enter)">↑</button>
+                    </form>
+                    <div class="ai-hint">
+                        <span><kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line · <kbd>Esc</kbd> stop waiting</span>
+                        <span id="aiSize"></span>
+                    </div>
+                </section>
             </div>
         </div>
 
