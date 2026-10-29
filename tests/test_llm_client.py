@@ -133,3 +133,36 @@ class TestChat:
         with pytest.raises(LlmApiError):
             await _client_with_handler(handler).chat({})
         assert len(calls) == 1
+
+
+class TestIsSleeping:
+    @pytest.mark.parametrize("sleeping", [True, False])
+    async def test_reads_props(self, configured, sleeping):
+        seen = {}
+
+        def handler(request):
+            seen["path"] = request.url.path
+            seen["auth"] = request.headers.get("authorization")
+            return httpx.Response(200, json={"is_sleeping": sleeping})
+
+        assert await _client_with_handler(handler).is_sleeping() is sleeping
+        assert seen == {"path": "/props", "auth": "Bearer llm-key"}
+
+    async def test_missing_field_means_awake(self, configured):
+        client = _client_with_handler(lambda r: httpx.Response(200, json={}))
+        assert await client.is_sleeping() is False
+
+    async def test_connect_error_is_503(self, configured):
+        def handler(request):
+            raise httpx.ConnectError("refused")
+
+        with pytest.raises(LlmApiError) as exc:
+            await _client_with_handler(handler).is_sleeping()
+        assert exc.value.status_code == 503
+
+    async def test_upstream_error_is_502(self, configured):
+        client = _client_with_handler(lambda r: httpx.Response(500, text="secret body"))
+        with pytest.raises(LlmApiError) as exc:
+            await client.is_sleeping()
+        assert exc.value.status_code == 502
+        assert "secret body" not in exc.value.message

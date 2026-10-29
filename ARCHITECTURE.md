@@ -340,15 +340,18 @@ parallelism  = 4 threads
 | Método | Path                         | Descrição                                   |
 |--------|------------------------------|---------------------------------------------|
 | POST   | `/llm/v1/chat/completions`   | Chat no formato OpenAI, sem streaming       |
+| POST   | `/llm/jobs`                  | Mesmo chat como job; responde `job_id`      |
+| GET    | `/llm/jobs/{job_id}`         | Estado e resultado do job                   |
 | GET    | `/llm/health`                | Repassa o `/health` do `trem-llm`           |
 
 O modelo (gpt-oss-120b no llama-server) roda no container `trem-llm`, na rede Docker
 `trem-llm` (`--internal`, sem porta no host). A trem-api é ligada a ela no deploy e
 fala com `http://trem-llm:8080` usando `LLM_API_KEY`; nada do chamador é repassado.
 
-- Síncrono. O modelo descarrega após 15 min ocioso e a recarga leva ~3,5 min, então o
-  cliente chama pela porta local (`127.0.0.1:13002`), sem Cloudflare (corta em 100 s) nem
-  nginx (60 s). `LLM_TIMEOUT` é 600 s.
+- O endpoint síncrono só serve pela porta local (`127.0.0.1:13002`): o modelo descarrega
+  após 15 min ocioso, a recarga leva ~3,5 min, e o Cloudflare corta em 100 s e o nginx em
+  60 s. Pela URL pública o cliente usa `/llm/jobs` e consulta o resultado, como na
+  transcrição. `LLM_TIMEOUT` é 600 s.
 - Uma inferência por vez (`--parallel 1`): fila em memória com até `LLM_QUEUE_SIZE`
   requisições; acima disso, 503 com `Retry-After`. Exige processo único.
 - O servidor força `stream: false`, remove `model` e limita `max_tokens` a `LLM_MAX_TOKENS`.
@@ -357,6 +360,16 @@ fala com `http://trem-llm:8080` usando `LLM_API_KEY`; nada do chamador é repass
 - Log de uma linha por requisição, só com métricas. Corpo, mensagens e resposta nunca
   vão para log nem para `detail` de erro (CVs e vagas são dados pessoais).
 - Se o cliente desconectar, a inferência continua até o fim ocupando o modelo.
+- Modelo dormindo (`GET /props` → `is_sleeping`): a chamada recebe na hora `503`
+  `warming_up` com `Retry-After`, e a API dispara uma única chamada para acordá-lo.
+  O llama-server não informa o progresso da carga, então `eta_seconds` e `progress`
+  são estimados a partir de `LLM_WARMUP_SECONDS` (recarga medida, 210 s).
+  `/llm/health` responde `healthy`, `sleeping` ou `warming_up` sem acordar o modelo.
+- Jobs (`LlmJobs`, em memória): dividem a fila e o aquecimento com o síncrono. A vaga na
+  fila é reservada no `POST`, então fila cheia é 503 na hora, não um job que falha depois.
+  Com o modelo dormindo, o job espera o aquecimento em vez de responder 503. Job
+  terminado guarda o resultado (dado pessoal) por `LLM_JOB_TTL_SECONDS` (1 h); jobs se
+  perdem se o processo reiniciar.
 
 ### Transcrição — upload em partes e job em segundo plano
 

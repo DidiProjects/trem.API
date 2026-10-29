@@ -378,10 +378,12 @@ images_per_page: 1-9 (default: 4, only for grouped)
 
 ### LLM Endpoints
 
-OpenAI-compatible chat completion backed by the `trem-llm` container. Synchronous and
-slow (a cold model takes minutes to load), so call it through the local port, not
-through Cloudflare. One inference runs at a time; when the queue is full the API
-answers `503` with `Retry-After`.
+OpenAI-compatible chat completion backed by the `trem-llm` container. Slow (a cold
+model takes minutes to load, a long prompt can take minutes to answer), so over the
+public URL use the [job endpoints](#chat-job): Cloudflare cuts responses at 100 s and
+nginx at 60 s. The synchronous endpoint is for callers on the local port. One inference
+runs at a time, jobs included; when the queue is full the API answers `503` with
+`Retry-After`.
 
 #### Chat Completion
 ```
@@ -394,6 +396,16 @@ Content-Type: application/json
 `stream` is forced to `false`, `model` is ignored and `max_tokens` is capped by the
 server. The llama-server response is returned as is (`choices`, `usage`, `timings`).
 
+The model sleeps after 15 min idle. A call to a sleeping model gets an immediate `503`
+and the API starts waking it; retry after `Retry-After` seconds:
+
+```json
+{"status": "warming_up", "detail": "Model is waking up, retry after the indicated time",
+ "elapsed_seconds": 40, "eta_seconds": 170, "progress": 0.19}
+```
+
+`eta_seconds` and `progress` are estimates from the measured reload time.
+
 With the OpenAI SDK, send the trem-api key as `X-API-Key` (the SDK's own Bearer is not used):
 
 ```python
@@ -401,10 +413,38 @@ OpenAI(base_url="http://localhost:13002/llm/v1", api_key="unused",
        default_headers={"X-API-Key": "trem_..."})
 ```
 
+#### Chat Job
+```
+POST /llm/jobs
+Content-Type: application/json
+
+{"messages": [{"role": "user", "content": "Reply with OK."}], "max_tokens": 64}
+```
+
+Same body and rules as the chat completion, answered at once with `202`:
+
+```json
+{"job_id": "3f2a...", "status": "queued"}
+```
+
+Poll the job until it ends:
+
+```
+GET /llm/jobs/{job_id}
+```
+
+`status` is `queued`, `running`, `done` (with `result`, the llama-server response as is)
+or `failed` (with `error`). A sleeping model is woken inside the job, so there is no
+`warming_up` answer here; the job just takes longer. Finished jobs expire after 1 h
+(`LLM_JOB_TTL_SECONDS`) and are lost if the API restarts.
+
 #### LLM Health
 ```
 GET /llm/health
 ```
+
+Returns `{"status": "healthy" | "sleeping" | "warming_up"}` without waking the model,
+or `503` when the model server is unreachable.
 
 ## Usage Examples
 
