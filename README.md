@@ -455,6 +455,37 @@ GET /llm/health
 Returns `{"status": "healthy" | "sleeping" | "warming_up"}` without waking the model,
 or `503` when the model server is unreachable.
 
+### Scraper Endpoints
+
+LinkedIn jobs and posts collected on a schedule and scored against the caller's CV, run by
+the linkedinho orchestrator on the internal network. Requires the `linkedin_scraper` profile
+and a person behind the call: a logged-in user, or an API key owned by a user (a service key
+without owner gets `403`). Jobs belong to that user, not to the key. The **Scrapers** tab of
+`/` does all of this.
+
+| Method | Path | |
+|---|---|---|
+| GET, POST | `/scrapers/linkedin/jobs` | List; create from a job config (searches, criteria, schedule, recipient) |
+| GET, PATCH, DELETE | `/scrapers/linkedin/jobs/{id}` | Status (`needs_cv`, `needs_login`, `scheduled`, `paused`, `halted`, `expired` after the optional `expires_on`); replace whole sections; delete with CV and results |
+| PUT | `/scrapers/linkedin/jobs/{id}/cv` | Multipart `file`, a `.docx` up to 2 MB |
+| POST | `/scrapers/linkedin/jobs/{id}/pause`, `/resume`, `/run` | `run` queues a collection ahead of the schedule |
+| GET | `/scrapers/linkedin/jobs/{id}/matches` | `min_score`, `limit` |
+| GET, DELETE | `/scrapers/linkedin/session` | LinkedIn session: `none`, `valid`, `expired` |
+| POST | `/scrapers/linkedin/session/login` | Opens a remote browser on the LinkedIn login; answers a one-time `url` |
+| GET, DELETE | `/scrapers/linkedin/session/login/{id}` | `starting`, `waiting`, `connected`, `failed`, `expired`, `cancelled`; cancel |
+
+**Connect LinkedIn** (the tab, or `POST .../session/login`) opens a private Chromium on the
+LinkedIn login on the server and returns a `url`, valid once for 2 minutes. Opening it trades
+the token for a cookie scoped to that login, and shows the browser through noVNC: the page and
+its WebSocket go browser → trem-api → orchestrator. The person types their password and 2FA on
+LinkedIn's page; nothing in between reads or stores it. Once the feed shows up the session is
+saved and the jobs start. A login lasts at most 10 minutes. Behind nginx, `/scrapers/linkedin/login/`
+needs WebSocket upgrade headers.
+
+The job config format and limits are in the linkedinho README. Validation errors come back as
+`422` with the orchestrator's detail; an orchestrator failure is `502`, unreachable `503`.
+Configured with `SCRAPER_API_URL` and `SCRAPER_API_KEY` (the orchestrator's `INTERNAL_API_KEY`).
+
 ## Usage Examples
 
 ### cURL

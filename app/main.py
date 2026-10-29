@@ -20,6 +20,7 @@ from app.routers import (
     imageRoute,
     llmRoute,
     pdfRoute,
+    scraperRoute,
     supportRoute,
     transcriptionRoute,
     videoRoute,
@@ -93,6 +94,7 @@ app.add_middleware(
         "/audio": get_settings().MAX_MEDIA_REQUEST_SIZE,
         "/movie": get_settings().MAX_MEDIA_REQUEST_SIZE,
         "/llm": get_settings().LLM_MAX_REQUEST_SIZE,
+        "/scrapers": get_settings().SCRAPER_MAX_REQUEST_SIZE,
     },
 )
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
@@ -111,6 +113,7 @@ app.include_router(transcriptionRoute.router, prefix="/audio", tags=["Audio"])
 app.include_router(imageRoute.router, prefix="/image", tags=["Image"])
 app.include_router(supportRoute.router, prefix="/support", tags=["Support"])
 app.include_router(llmRoute.router, prefix="/llm", tags=["LLM"])
+app.include_router(scraperRoute.router, prefix="/scrapers/linkedin", tags=["Scrapers"])
 
 
 @app.get("/", include_in_schema=False)

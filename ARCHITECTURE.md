@@ -405,6 +405,39 @@ fala com `http://trem-llm:8080` usando `LLM_API_KEY`; nada do chamador é repass
   usuário digita, e retoma o polling de respostas pendentes após recarregar a página.
   O histórico fica só no `localStorage` do navegador.
 
+### Scrapers — perfil `linkedin_scraper`
+
+| Método | Path | Descrição |
+|--------|------|-----------|
+| *      | `/scrapers/linkedin/*` | Proxy para o orquestrador do linkedinho na rede Docker |
+
+- A trem-api só autentica e repassa (`app/routers/scraperRoute.py`, cliente em
+  `infrastructure/http/scraper_client.py`). Jobs, CVs, resultados e sessões do LinkedIn ficam
+  no orquestrador, cifrados por dono.
+- O dono é o `Principal.user_id`: o usuário logado ou o dono da chave. Chave de serviço sem
+  dono recebe 403. A trem-api envia `X-Owner-Id` e `X-Internal-Key` (`SCRAPER_API_KEY`) e
+  descarta os que vierem do chamador; o orquestrador só confia no dono junto com essa chave.
+- O id do job precisa ser 32 hex antes de ir para a URL do orquestrador.
+- Erros do próprio pedido (400/404/409/413/422) passam com o `detail`; falha do orquestrador
+  vira 502 sem detalhe, indisponível 503, timeout 504. Sem retry: criar job ou enfileirar
+  execução duas vezes não é inofensivo.
+- A aba **Scrapers** da página `/` lista os jobs com status, próxima e última execução, cria e
+  edita, envia o CV, pausa/retoma/executa e mostra os matches. Atualiza sozinha a cada 30 s.
+- **Login remoto do LinkedIn.** `POST /session/login` faz o orquestrador abrir um Chromium só
+  daquele usuário, num display próprio, transmitido por x11vnc + websockify presos ao
+  localhost do container. A trem-api devolve uma URL com token de uso único (2 min,
+  `app/services/scraperLoginService.py`); abrir a URL troca o token por um cookie aleatório
+  `HttpOnly`, `SameSite=Strict`, com path restrito àquele login, e redireciona ao noVNC. Os
+  arquivos do noVNC e o WebSocket (`/scrapers/linkedin/login/{id}/...`) só aceitam esse
+  cookie; o WebSocket exige também `Origin` igual ao host. Só digests de token e cookie ficam
+  em memória (processo único).
+- A senha vai do teclado da pessoa para a página do LinkedIn naquele navegador: os quadros do
+  VNC passam pela trem-api, mas nada os lê nem os grava. A confiança é no operador do servidor,
+  como em qualquer navegador remoto.
+- O login segura a trava do dono (nunca divide o perfil com uma coleta), dura no máximo 10 min
+  e no máximo 2 rodam ao mesmo tempo. Em produção o nginx precisa repassar `Upgrade`/`Connection`
+  em `/scrapers/linkedin/login/`.
+
 ### Transcrição — upload em partes e job em segundo plano
 
 O Cloudflare recusa corpos acima de 100 MB e respostas que levam mais de 100 s.

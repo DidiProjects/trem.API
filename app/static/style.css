@@ -1471,3 +1471,350 @@ input[type="number"]:focus {
         display: none;
     }
 }
+
+/* --- Scrapers tab --- */
+
+.scr {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.scr-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.scr-head h3 {
+    margin: 0;
+    color: #fff;
+}
+
+.scr-sub {
+    margin: 0.25rem 0 0;
+    color: #888;
+    font-size: 0.9rem;
+}
+
+.scr-session {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+    color: #ccc;
+}
+
+.scr-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #666;
+}
+
+.scr-dot.ok { background: #00ff88; }
+.scr-dot.warn { background: #f5b700; }
+.scr-dot.error { background: #f93e3e; }
+
+.scr-note {
+    margin: 0;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    border: 1px solid rgba(245, 183, 0, 0.3);
+    background: rgba(245, 183, 0, 0.08);
+    color: #e9d18a;
+    font-size: 0.85rem;
+}
+
+.scr-toolbar,
+.scr-form-actions {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.scr-connect {
+    padding: 0.35rem 0.9rem;
+    font-size: 0.85rem;
+}
+
+.scr-note a {
+    color: #00d9ff;
+}
+
+.scr-link {
+    background: none;
+    border: none;
+    color: #00d9ff;
+    cursor: pointer;
+    font-size: 0.85rem;
+    padding: 0;
+}
+
+.scr-link:hover {
+    text-decoration: underline;
+}
+
+.scr-empty {
+    margin: 0;
+    color: #888;
+    font-size: 0.9rem;
+}
+
+.scr-jobs {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.scr-job {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 1rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+
+.scr-job-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.scr-job-name {
+    color: #fff;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.scr-badge {
+    flex-shrink: 0;
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    background: rgba(255, 255, 255, 0.08);
+    color: #aaa;
+}
+
+.scr-badge.ok { background: rgba(0, 255, 136, 0.15); color: #00ff88; }
+.scr-badge.warn { background: rgba(245, 183, 0, 0.15); color: #f5b700; }
+.scr-badge.error { background: rgba(249, 62, 62, 0.15); color: #ff7b7b; }
+
+.scr-job-alert {
+    margin: 0;
+    color: #ff7b7b;
+    font-size: 0.85rem;
+}
+
+.scr-job-meta {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.25rem 1rem;
+    color: #999;
+    font-size: 0.82rem;
+}
+
+.scr-job-meta span {
+    overflow-wrap: anywhere;
+}
+
+.scr-job-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.scr-btn {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    color: #ddd;
+    padding: 0.4rem 0.8rem;
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.scr-btn:hover:not(:disabled) {
+    border-color: #00d9ff;
+    color: #fff;
+}
+
+.scr-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.scr-btn.danger:hover:not(:disabled) {
+    border-color: #f93e3e;
+    color: #ff7b7b;
+}
+
+.scr-form {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 1.25rem;
+}
+
+.scr-form h4,
+.scr-matches h4 {
+    margin: 0;
+    color: #fff;
+}
+
+.scr-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+}
+
+.scr-grid-4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.scr-form input[type="email"],
+.scr-form input[type="date"],
+.scr-form textarea,
+.scr-form select {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    color: #fff;
+    font-size: 0.95rem;
+    font-family: inherit;
+}
+
+.scr-form textarea {
+    resize: vertical;
+    min-height: 84px;
+}
+
+.scr-form select option {
+    background: #1a1a2e;
+}
+
+.scr-form input[type="email"]:focus,
+.scr-form input[type="date"]:focus,
+.scr-form textarea:focus,
+.scr-form select:focus {
+    outline: none;
+    border-color: #00d9ff;
+    box-shadow: 0 0 0 3px rgba(0, 217, 255, 0.2);
+}
+
+.scr-form input[type="number"] {
+    width: 100%;
+}
+
+.scr-days {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 0.75rem;
+}
+
+.scr-day,
+.scr-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    color: #ccc;
+    font-size: 0.85rem;
+}
+
+.scr-matches {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.scr-matches-head {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.scr-matches-head h4 {
+    flex: 1;
+}
+
+.scr-table {
+    overflow-x: auto;
+}
+
+.scr-table table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+
+.scr-table th,
+.scr-table td {
+    text-align: left;
+    padding: 0.6rem 0.5rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    vertical-align: top;
+}
+
+.scr-table th {
+    color: #888;
+    font-weight: 500;
+}
+
+.scr-table a {
+    color: #00d9ff;
+}
+
+.scr-score {
+    font-weight: 700;
+    color: #888;
+    width: 3rem;
+}
+
+.scr-score.ok {
+    color: #00ff88;
+}
+
+.scr-where {
+    color: #999;
+    margin-top: 0.15rem;
+}
+
+.scr-reason {
+    color: #ccc;
+    margin-top: 0.3rem;
+}
+
+.scr-date {
+    color: #888;
+    white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+    .scr-grid,
+    .scr-grid-4,
+    .scr-job-meta {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .scr-grid-4 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .scr-date {
+        white-space: normal;
+    }
+}
