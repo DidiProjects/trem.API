@@ -21,10 +21,11 @@ class UserService:
         if existing:
             raise UserAlreadyExistsError()
 
-        profile = await self._repo.get_profile_by_name(data.profile_name)
-        if not profile:
+        profiles = await self._repo.get_profiles_by_names(data.profile_names)
+        missing = set(data.profile_names) - {p.name for p in profiles}
+        if missing:
             from app.core.exceptions import AppException
-            raise AppException(f"Perfil '{data.profile_name}' não encontrado", 400)
+            raise AppException(f"Perfis não encontrados: {', '.join(sorted(missing))}", 400)
 
         # Usuário criado sem senha — admin envia a senha provisória depois
         placeholder_hash = hash_password("__NO_PASSWORD_SET__")
@@ -32,7 +33,7 @@ class UserService:
         user = await self._repo.create(
             username=data.username,
             password_hash=placeholder_hash,
-            profile_id=str(profile.id),
+            profile_ids=[str(p.id) for p in profiles],
             email=data.email,
         )
         return user

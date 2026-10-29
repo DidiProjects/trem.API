@@ -4,7 +4,6 @@ from typing import Optional, Union
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload
 
 from app.core.interfaces.i_user_repository import IUserRepository
 from app.domain.entities.user import User
@@ -33,8 +32,7 @@ def _to_entity(orm: UserModel) -> User:
         username=orm.username,
         email=orm.email,
         password_hash=orm.password_hash,
-        profile_id=str(orm.profile_id),
-        profile_name=orm.profile.name if orm.profile else "",
+        profile_names=sorted(p.name for p in orm.profiles),
         status=orm.status,
         must_change_password=orm.must_change_password,
         provisional_password_sent_at=orm.provisional_password_sent_at,
@@ -55,7 +53,6 @@ class UserRepository(BaseRepository, IUserRepository):
             return None
         result = await self._session.execute(
             select(UserModel)
-            .options(joinedload(UserModel.profile))
             .where(UserModel.id == uid)
         )
         orm = result.scalar_one_or_none()
@@ -64,7 +61,6 @@ class UserRepository(BaseRepository, IUserRepository):
     async def get_by_username(self, username: str) -> Optional[User]:
         result = await self._session.execute(
             select(UserModel)
-            .options(joinedload(UserModel.profile))
             .where(UserModel.username == username)
         )
         orm = result.scalar_one_or_none()
@@ -74,18 +70,17 @@ class UserRepository(BaseRepository, IUserRepository):
         self,
         username: str,
         password_hash: str,
-        profile_id: str,
+        profile_ids: list[str],
         email: Optional[str] = None,
     ) -> User:
         orm = UserModel(
             username=username,
             email=email,
             password_hash=password_hash,
-            profile_id=_as_uuid(profile_id),
+            profiles=await self.get_profiles_by_ids(profile_ids),
         )
         self._session.add(orm)
         await self._session.flush()
-        await self._session.refresh(orm, ["profile"])
         return _to_entity(orm)
 
     async def update_password(
@@ -131,7 +126,6 @@ class UserRepository(BaseRepository, IUserRepository):
     async def list_all(self, limit: int = 50, offset: int = 0) -> list[User]:
         result = await self._session.execute(
             select(UserModel)
-            .options(joinedload(UserModel.profile))
             .order_by(UserModel.created_at.desc())
             .limit(limit)
             .offset(offset)
@@ -189,3 +183,16 @@ class UserRepository(BaseRepository, IUserRepository):
             select(ProfileModel).where(ProfileModel.name == name)
         )
         return result.scalar_one_or_none()
+
+    async def get_profiles_by_names(self, names: list[str]) -> list[ProfileModel]:
+        result = await self._session.execute(
+            select(ProfileModel).where(ProfileModel.name.in_(names))
+        )
+        return list(result.scalars().all())
+
+    async def get_profiles_by_ids(self, profile_ids: list[str]) -> list[ProfileModel]:
+        ids = [_as_uuid(p) for p in profile_ids]
+        result = await self._session.execute(
+            select(ProfileModel).where(ProfileModel.id.in_([i for i in ids if i]))
+        )
+        return list(result.scalars().all())

@@ -22,9 +22,9 @@ def repo():
     mock = MagicMock()
     mock.get_by_id = AsyncMock(return_value=None)
     mock.get_by_username = AsyncMock(return_value=None)
-    mock.get_profile_by_name = AsyncMock(
-        return_value=MagicMock(id=PROFILE_ID, name=ProfileName.FILE_EDITOR.value)
-    )
+    profile = MagicMock(id=PROFILE_ID)
+    profile.name = ProfileName.FILE_EDITOR.value  # `name=` in the constructor names the mock itself
+    mock.get_profiles_by_names = AsyncMock(return_value=[profile])
     mock.create = AsyncMock(return_value=make_mock_user())
     mock.update_password = AsyncMock()
     mock.set_provisional_password_sent = AsyncMock()
@@ -51,23 +51,31 @@ def service(repo, email):
 class TestCreateUser:
     async def test_success_returns_user(self, service, repo):
         data = UserCreate(
-            username="novo", email="novo@example.com", profile_name="file_editor"
+            username="novo", email="novo@example.com", profile_names=["file_editor"]
         )
         user = await service.create_user(data)
         assert user is not None
         repo.create.assert_awaited_once()
 
-    async def test_resolves_profile_id_from_name(self, service, repo):
-        data = UserCreate(username="novo", profile_name="file_editor")
+    async def test_resolves_profile_ids_from_names(self, service, repo):
+        data = UserCreate(username="novo", profile_names=["file_editor"])
         await service.create_user(data)
-        assert repo.create.await_args.kwargs["profile_id"] == PROFILE_ID
+        assert repo.create.await_args.kwargs["profile_ids"] == [PROFILE_ID]
+
+    async def test_some_profiles_missing_in_database_raises(self, service, repo):
+        data = UserCreate(username="novo", profile_names=["file_editor", "ai"])
+        with pytest.raises(AppException) as exc:
+            await service.create_user(data)
+        assert exc.value.status_code == 400
+        assert "ai" in exc.value.message
+        repo.create.assert_not_awaited()
 
     async def test_stores_unusable_placeholder_password(self, service, repo):
         """
         A conta nasce sem senha real: o hash gravado não pode validar nenhuma
         senha que o usuário conheça, até o admin enviar a provisória.
         """
-        data = UserCreate(username="novo", profile_name="file_editor")
+        data = UserCreate(username="novo", profile_names=["file_editor"])
         await service.create_user(data)
 
         placeholder = repo.create.await_args.kwargs["password_hash"]
@@ -77,14 +85,14 @@ class TestCreateUser:
 
     async def test_duplicate_username_raises(self, service, repo):
         repo.get_by_username.return_value = make_mock_user()
-        data = UserCreate(username="existente", profile_name="file_editor")
+        data = UserCreate(username="existente", profile_names=["file_editor"])
 
         with pytest.raises(UserAlreadyExistsError):
             await service.create_user(data)
 
     async def test_duplicate_username_does_not_create(self, service, repo):
         repo.get_by_username.return_value = make_mock_user()
-        data = UserCreate(username="existente", profile_name="file_editor")
+        data = UserCreate(username="existente", profile_names=["file_editor"])
 
         with pytest.raises(UserAlreadyExistsError):
             await service.create_user(data)
@@ -92,8 +100,8 @@ class TestCreateUser:
 
     async def test_missing_profile_in_database_raises(self, service, repo):
         """Perfil válido no schema mas ausente no banco (seed não rodou)."""
-        repo.get_profile_by_name.return_value = None
-        data = UserCreate(username="novo", profile_name="file_editor")
+        repo.get_profiles_by_names.return_value = []
+        data = UserCreate(username="novo", profile_names=["file_editor"])
 
         with pytest.raises(AppException) as exc:
             await service.create_user(data)
@@ -101,7 +109,7 @@ class TestCreateUser:
 
     async def test_passes_email_through(self, service, repo):
         data = UserCreate(
-            username="novo", email="Novo@Example.COM", profile_name="file_editor"
+            username="novo", email="Novo@Example.COM", profile_names=["file_editor"]
         )
         await service.create_user(data)
         assert repo.create.await_args.kwargs["email"] == "novo@example.com"

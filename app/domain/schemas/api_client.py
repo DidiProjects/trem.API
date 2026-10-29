@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.domain.entities.profile import ProfileName
 
@@ -17,8 +17,18 @@ class ApiClientCreate(BaseModel):
         pattern=CLIENT_NAME_PATTERN,
         description="Identificador da aplicação, ex: flight-api",
     )
-    profile_name: ProfileName
+    profile_names: list[ProfileName] = Field(min_length=1)
     description: Optional[str] = Field(default=None, max_length=500)
+    user_id: Optional[str] = Field(
+        default=None,
+        description="Dono da chave. Os perfis precisam estar entre os dele; "
+        "sem dono, é chave de serviço",
+    )
+
+    @field_validator("profile_names")
+    @classmethod
+    def dedupe_profiles(cls, v: list[ProfileName]) -> list[ProfileName]:
+        return sorted(set(v))
 
 
 class ApiClientResponse(BaseModel):
@@ -27,7 +37,8 @@ class ApiClientResponse(BaseModel):
     id: str
     name: str
     description: Optional[str]
-    profile_name: str
+    profile_names: list[str]
+    user_id: Optional[str]
     revoked: bool
     last_used_at: Optional[datetime]
     created_at: datetime

@@ -65,8 +65,8 @@ def probe(probe_app, repo):
         yield TestClient(probe_app)
 
 
-def _bearer(user_id=USER_ID, profile=ProfileName.FILE_EDITOR.value, must_change=False):
-    token = create_access_token(user_id, "testuser", profile, must_change)
+def _bearer(user_id=USER_ID, profiles=(ProfileName.FILE_EDITOR.value,), must_change=False):
+    token = create_access_token(user_id, "testuser", list(profiles), must_change)
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -97,7 +97,7 @@ class TestGetCurrentUser:
         data = get_settings().model_dump()
         data["ACCESS_TOKEN_EXPIRE_MINUTES"] = -5
         with patch("app.core.security.get_settings", return_value=Settings(**data)):
-            expired = create_access_token(USER_ID, "testuser", "file_editor", False)
+            expired = create_access_token(USER_ID, "testuser", ["file_editor"], False)
 
         response = probe.get("/me", headers={"Authorization": f"Bearer {expired}"})
         assert response.status_code == 401
@@ -148,34 +148,37 @@ class TestGetCurrentActiveUser:
 
 class TestRequireProfile:
     def test_matching_profile_is_allowed(self, probe, repo):
-        repo.get_by_id.return_value = make_mock_user(
-            profile_name=ProfileName.FILE_EDITOR.value
-        )
+        repo.get_by_id.return_value = make_mock_user((ProfileName.FILE_EDITOR.value,))
         assert probe.get("/editor", headers=_bearer()).status_code == 200
 
     def test_wrong_profile_returns_403(self, probe, repo):
-        repo.get_by_id.return_value = make_mock_user(
-            profile_name=ProfileName.AIRLINE_COMPANY.value
-        )
+        repo.get_by_id.return_value = make_mock_user((ProfileName.AIRLINE_COMPANY.value,))
         response = probe.get("/editor", headers=_bearer())
         assert response.status_code == 403
         assert "Permissão insuficiente" in response.json()["detail"]
 
     def test_airline_profile_reaches_airline_route(self, probe, repo):
-        repo.get_by_id.return_value = make_mock_user(
-            profile_name=ProfileName.AIRLINE_COMPANY.value
-        )
+        repo.get_by_id.return_value = make_mock_user((ProfileName.AIRLINE_COMPANY.value,))
         assert probe.get("/airline", headers=_bearer()).status_code == 200
 
     def test_profile_comes_from_database_not_token(self, probe, repo):
         """Token forjado com profile elevado não vale — o perfil vem do banco."""
-        repo.get_by_id.return_value = make_mock_user(
-            profile_name=ProfileName.AIRLINE_COMPANY.value
-        )
+        repo.get_by_id.return_value = make_mock_user((ProfileName.AIRLINE_COMPANY.value,))
         response = probe.get(
-            "/editor", headers=_bearer(profile=ProfileName.FILE_EDITOR.value)
+            "/editor", headers=_bearer(profiles=(ProfileName.FILE_EDITOR.value,))
         )
         assert response.status_code == 403
+
+    def test_one_of_several_profiles_is_enough(self, probe, repo):
+        repo.get_by_id.return_value = make_mock_user(
+            (ProfileName.AIRLINE_COMPANY.value, ProfileName.FILE_EDITOR.value)
+        )
+        assert probe.get("/editor", headers=_bearer()).status_code == 200
+        assert probe.get("/airline", headers=_bearer()).status_code == 200
+
+    def test_user_without_profiles_is_403(self, probe, repo):
+        repo.get_by_id.return_value = make_mock_user(())
+        assert probe.get("/editor", headers=_bearer()).status_code == 403
 
     def test_pending_password_change_blocks_profile_routes(self, probe, repo):
         repo.get_by_id.return_value = make_mock_user(must_change_password=True)

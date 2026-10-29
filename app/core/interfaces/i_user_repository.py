@@ -20,7 +20,7 @@ class IUserRepository(ABC):
         self,
         username: str,
         password_hash: str,
-        profile_id: str,
+        profile_ids: list[str],
         email: Optional[str] = None,
     ) -> User:
         ...

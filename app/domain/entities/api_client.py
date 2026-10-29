@@ -27,11 +27,12 @@ class ApiClient:
     id: str
     name: str
     description: Optional[str]
-    profile_id: str
-    profile_name: str
+    profile_names: list[str]
     revoked: bool
     last_used_at: Optional[datetime]
     created_at: datetime
+    # Usuário dono da chave; None para chave de serviço, sem pessoa por trás.
+    user_id: Optional[str] = None
 
     @property
     def is_active(self) -> bool:
@@ -40,7 +41,7 @@ class ApiClient:
     def __repr__(self) -> str:  # nunca inclua key_hash aqui
         return (
             f"ApiClient(id={self.id!r}, name={self.name!r}, "
-            f"profile={self.profile_name!r}, revoked={self.revoked!r})"
+            f"profiles={self.profile_names!r}, revoked={self.revoked!r})"
         )
 
 
@@ -54,10 +55,14 @@ class Principal:
 
     id: str
     display_name: str
-    profile_name: str
+    profile_names: frozenset[str]
     kind: PrincipalKind
     # Só se aplica a usuários; cliente nunca tem senha para trocar.
     must_change_password: bool = False
+    # A pessoa por trás da chamada: o próprio usuário, ou o dono da chave.
+    # Recursos pessoais (jobs de scraping) pertencem a ela, não à chave, para
+    # sobreviverem à rotação da chave e aparecerem também no login por JWT.
+    user_id: Optional[str] = None
 
     @property
     def is_user(self) -> bool:
@@ -67,14 +72,18 @@ class Principal:
     def is_client(self) -> bool:
         return self.kind == PrincipalKind.CLIENT
 
+    def has_profile(self, profile_name: str) -> bool:
+        return profile_name in self.profile_names
+
     @classmethod
     def from_user(cls, user) -> "Principal":
         return cls(
             id=user.id,
             display_name=user.username,
-            profile_name=user.profile_name,
+            profile_names=frozenset(user.profile_names),
             kind=PrincipalKind.USER,
             must_change_password=user.must_change_password,
+            user_id=user.id,
         )
 
     @classmethod
@@ -82,7 +91,8 @@ class Principal:
         return cls(
             id=client.id,
             display_name=client.name,
-            profile_name=client.profile_name,
+            profile_names=frozenset(client.profile_names),
             kind=PrincipalKind.CLIENT,
             must_change_password=False,
+            user_id=client.user_id,
         )

@@ -19,12 +19,17 @@ class UserCreate(BaseModel):
         description="Letras, números, _, . e -",
     )
     email: Optional[EmailStr] = None
-    profile_name: ProfileName
+    profile_names: list[ProfileName] = Field(min_length=1)
 
     @field_validator("email")
     @classmethod
     def normalize_email(cls, v: Optional[str]) -> Optional[str]:
         return v.lower() if v else None
+
+    @field_validator("profile_names")
+    @classmethod
+    def dedupe_profiles(cls, v: list[ProfileName]) -> list[ProfileName]:
+        return sorted(set(v))
 
 
 class UserResponse(BaseModel):
@@ -34,7 +39,7 @@ class UserResponse(BaseModel):
     id: str
     username: str
     email: Optional[str]
-    profile_name: str
+    profile_names: list[str]
     status: UserStatus
     must_change_password: bool
     provisional_password_sent_at: Optional[datetime]

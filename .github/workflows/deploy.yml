@@ -15,6 +15,21 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # Postgres descartavel para tests/test_migrations.py: sem ele os testes das
+    # migrations pulam, e sao elas que o deploy aplica no banco de producao.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: trem_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d trem_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -37,6 +52,7 @@ jobs:
           pytest -q --tb=short --cov=app --cov-report=term
         env:
           API_KEY: test-api-key
+          TEST_DATABASE_URL: postgresql+asyncpg://postgres:test@localhost:5432/trem_test
 
   deploy:
     runs-on: ubuntu-latest

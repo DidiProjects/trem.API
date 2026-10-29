@@ -9,6 +9,8 @@ class ProfileName(StrEnum):
 
     FILE_EDITOR = "file_editor"
     AIRLINE_COMPANY = "airline_company"
+    AI = "ai"
+    LINKEDIN_SCRAPER = "linkedin_scraper"
 
 
 @dataclass
