@@ -135,6 +135,15 @@ docker exec trem-api pytest tests/test_routes.py -v
 docker exec trem-api pytest tests/test_security.py -v
 ```
 
+Migrations run against a real PostgreSQL whose name contains `test` (its schema is dropped;
+skipped without the variable):
+
+```bash
+docker run -d --name trem-test-pg -e POSTGRES_PASSWORD=test -e POSTGRES_DB=trem_test \
+  -p 127.0.0.1:55432:5432 postgres:16-alpine
+TEST_DATABASE_URL=postgresql+asyncpg://postgres:test@127.0.0.1:55432/trem_test pytest tests/test_migrations.py -v
+```
+
 After each deploy, check uploads through Cloudflare and the reverse proxy (skipped without the variables):
 
 ```bash
@@ -383,7 +392,7 @@ model takes minutes to load, a long prompt can take minutes to answer), so over 
 public URL use the [job endpoints](#chat-job): Cloudflare cuts responses at 100 s and
 nginx at 60 s. The synchronous endpoint is for callers on the local port. One inference
 runs at a time, jobs included; when the queue is full the API answers `503` with
-`Retry-After`.
+`Retry-After`. Every `/llm` route requires the `ai` profile (`403` without it).
 
 #### Chat Completion
 ```

@@ -21,7 +21,7 @@ from app.infrastructure.database.connection import get_db
 from app.infrastructure.http.llm_client import LlmClient
 from app.main import app
 from app.routers import llmRoute
-from tests.conftest import _user_file_editor, make_mock_user, mock_get_db
+from tests.conftest import _authenticated_as, _user_ai, make_mock_user, mock_get_db
 
 BASE_URL = "http://trem-llm:8080"
 SENTINEL = "SENTINEL-personal-data-7f3a"
@@ -103,9 +103,16 @@ def upstream(settings, monkeypatch):
 
 
 @pytest.fixture
+def client():
+    """Overrides the conftest client: /llm needs the ai profile, not file_editor."""
+    yield _authenticated_as(_user_ai)
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
 async def async_client():
-    app.dependency_overrides[get_current_user] = _user_file_editor
-    app.dependency_overrides[authenticated_user_or_none] = _user_file_editor
+    app.dependency_overrides[get_current_user] = _user_ai
+    app.dependency_overrides[authenticated_user_or_none] = _user_ai
     app.dependency_overrides[get_db] = mock_get_db
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as c:
@@ -119,10 +126,43 @@ class TestAuth:
         assert client_no_auth.get("/llm/health").status_code == 401
         assert upstream.requests == []
 
+    @pytest.mark.parametrize("profiles", [("file_editor",), ("airline_company",), ("linkedin_scraper",)])
+    @pytest.mark.parametrize(
+        "method,path",
+        [
+            ("post", "/llm/v1/chat/completions"),
+            ("post", "/llm/jobs"),
+            ("get", "/llm/jobs/any"),
+            ("get", "/llm/health"),
+        ],
+    )
+    def test_requires_ai_profile(self, upstream, profiles, method, path):
+        async def user():
+            return make_mock_user(profiles)
+
+        client = _authenticated_as(user)
+        try:
+            kwargs = {"json": CHAT} if method == "post" else {}
+            response = getattr(client, method)(path, **kwargs)
+        finally:
+            app.dependency_overrides.clear()
+        assert response.status_code == 403
+        assert upstream.requests == []
+
+    def test_ai_among_other_profiles_is_enough(self, upstream):
+        async def user():
+            return make_mock_user(("file_editor", "ai"))
+
+        client = _authenticated_as(user)
+        try:
+            assert client.post("/llm/v1/chat/completions", json=CHAT).status_code == 200
+        finally:
+            app.dependency_overrides.clear()
+
     def test_upstream_gets_internal_key_not_client_headers(self, client, upstream):
         # Key lookup needs the database; only what reaches upstream matters here.
         app.dependency_overrides[get_current_principal] = lambda: Principal.from_user(
-            make_mock_user()
+            make_mock_user(("ai",))
         )
         response = client.post(
             "/llm/v1/chat/completions",
