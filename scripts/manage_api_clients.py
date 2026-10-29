@@ -8,6 +8,7 @@ diretamente, então precisa de DATABASE_URL apontando para o Postgres.
 
 Uso:
     python -m scripts.manage_api_clients create flight-api --profile airline_company
+    python -m scripts.manage_api_clients create diego-ai --profile ai --profile linkedin_scraper --user diego
     python -m scripts.manage_api_clients list
     python -m scripts.manage_api_clients revoke <client_id>
 
@@ -23,6 +24,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.core.config import get_settings
 from app.core.exceptions import AppException
 from app.domain.entities.profile import ProfileName
+from app.repositories.user_repository import UserRepository
 from app.services.api_client_service import ApiClientService
 
 
@@ -35,18 +37,26 @@ async def cmd_create(args) -> int:
     engine, Session = _session_factory()
     try:
         async with Session() as session:
+            user_id = None
+            if args.user:
+                owner = await UserRepository(session).get_by_username(args.user)
+                if not owner:
+                    print(f"erro: usuário '{args.user}' não encontrado", file=sys.stderr)
+                    return 1
+                user_id = owner.id
             try:
                 client, raw_key = await ApiClientService(session).create_client(
                     name=args.name,
-                    profile_name=args.profile,
+                    profile_names=args.profile,
                     description=args.description,
+                    user_id=user_id,
                 )
             except AppException as e:
                 print(f"erro: {e.message}", file=sys.stderr)
                 return 1
             await session.commit()
 
-        print(f"cliente criado: {client.name}  (perfil: {client.profile_name})")
+        print(f"cliente criado: {client.name}  (perfis: {', '.join(client.profile_names)})")
         print(f"id:      {client.id}")
         print(f"api key: {raw_key}")
         print()
@@ -66,11 +76,12 @@ async def cmd_list(args) -> int:
             print("nenhum cliente cadastrado")
             return 0
 
-        print(f"{'NOME':<24} {'PERFIL':<18} {'STATUS':<10} {'ÚLTIMO USO':<20} ID")
+        print(f"{'NOME':<24} {'PERFIS':<36} {'STATUS':<10} {'ÚLTIMO USO':<20} ID")
         for c in clients:
             status = "revogado" if c.revoked else "ativo"
             last = c.last_used_at.strftime("%Y-%m-%d %H:%M") if c.last_used_at else "nunca"
-            print(f"{c.name:<24} {c.profile_name:<18} {status:<10} {last:<20} {c.id}")
+            profiles = ",".join(c.profile_names)
+            print(f"{c.name:<24} {profiles:<36} {status:<10} {last:<20} {c.id}")
         print(f"\ntotal: {total}")
         return 0
     finally:
@@ -102,9 +113,11 @@ def main() -> int:
     create.add_argument(
         "--profile",
         required=True,
+        action="append",
         choices=[p.value for p in ProfileName],
-        help="perfil de acesso do cliente",
+        help="perfil de acesso do cliente; repita para vários",
     )
+    create.add_argument("--user", default=None, help="username do dono da chave")
     create.add_argument("--description", default=None)
     create.set_defaults(func=cmd_create)
 

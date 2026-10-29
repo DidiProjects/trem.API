@@ -23,7 +23,7 @@ async def _make_user(repo, seeded_profiles, username="novo", email="novo@example
     return await repo.create(
         username=username,
         password_hash="$argon2id$hash",
-        profile_id=seeded_profiles[ProfileName.FILE_EDITOR.value],
+        profile_ids=[seeded_profiles[ProfileName.FILE_EDITOR.value]],
         email=email,
     )
 
@@ -51,9 +51,28 @@ class TestCreate:
         assert user.username == "novo"
         assert user.email == "novo@example.com"
 
-    async def test_resolves_profile_name(self, repo, seeded_profiles):
+    async def test_resolves_profile_names(self, repo, seeded_profiles):
         user = await _make_user(repo, seeded_profiles)
-        assert user.profile_name == ProfileName.FILE_EDITOR.value
+        assert user.profile_names == [ProfileName.FILE_EDITOR.value]
+
+    async def test_several_profiles_come_back_sorted(self, repo, seeded_profiles):
+        user = await repo.create(
+            username="varios",
+            password_hash="$argon2id$hash",
+            profile_ids=[
+                seeded_profiles[ProfileName.LINKEDIN_SCRAPER.value],
+                seeded_profiles[ProfileName.AI.value],
+            ],
+        )
+        assert user.profile_names == [ProfileName.AI.value, ProfileName.LINKEDIN_SCRAPER.value]
+        found = await repo.get_by_username("varios")
+        assert found.profile_names == user.profile_names
+
+    async def test_profile_lookups_by_name_and_id(self, repo, seeded_profiles):
+        by_name = await repo.get_profiles_by_names(["ai", "file_editor", "inexistente"])
+        assert {p.name for p in by_name} == {"ai", "file_editor"}
+        by_id = await repo.get_profiles_by_ids([seeded_profiles["ai"], "nao-e-uuid"])
+        assert [p.name for p in by_id] == ["ai"]
 
     async def test_defaults_to_blocked_and_must_change_password(self, repo, seeded_profiles):
         """Conta nasce bloqueada — o admin habilita depois."""
@@ -73,7 +92,7 @@ class TestCreate:
         user = await repo.create(
             username="sememail",
             password_hash="$argon2id$hash",
-            profile_id=seeded_profiles[ProfileName.FILE_EDITOR.value],
+            profile_ids=[seeded_profiles[ProfileName.FILE_EDITOR.value]],
         )
         assert user.email is None
 
@@ -81,9 +100,9 @@ class TestCreate:
         user = await repo.create(
             username="cia",
             password_hash="$argon2id$hash",
-            profile_id=seeded_profiles[ProfileName.AIRLINE_COMPANY.value],
+            profile_ids=[seeded_profiles[ProfileName.AIRLINE_COMPANY.value]],
         )
-        assert user.profile_name == ProfileName.AIRLINE_COMPANY.value
+        assert user.profile_names == [ProfileName.AIRLINE_COMPANY.value]
 
 
 class TestGetById:
@@ -101,7 +120,7 @@ class TestGetById:
 
     async def test_loads_profile_relationship(self, repo, persisted_user):
         found = await repo.get_by_id(str(persisted_user.id))
-        assert found.profile_name == ProfileName.FILE_EDITOR.value
+        assert found.profile_names == [ProfileName.FILE_EDITOR.value]
 
 
 class TestGetByUsername:

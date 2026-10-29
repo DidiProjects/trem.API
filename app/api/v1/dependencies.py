@@ -134,10 +134,11 @@ def require_profile(profile_name: str) -> Callable:
     Factory: exige um perfil específico, seja o chamador usuário ou cliente.
 
     O perfil vem sempre do banco (registro do usuário ou do cliente), nunca de
-    algo que o chamador possa forjar no request.
+    algo que o chamador possa forjar no request — nem do claim do JWT, que
+    poderia estar defasado em relação ao banco.
     """
     async def _check(principal: Principal = Depends(get_current_principal)) -> Principal:
-        if principal.profile_name != profile_name:
+        if not principal.has_profile(profile_name):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Permissão insuficiente para este recurso",

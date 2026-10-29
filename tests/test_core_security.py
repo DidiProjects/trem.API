@@ -136,37 +136,38 @@ class TestAccessToken:
         token = create_access_token(
             user_id=USER_ID,
             username="testuser",
-            profile="file_editor",
+            profiles=["file_editor", "ai"],
             must_change_password=False,
         )
         payload = decode_token(token)
 
         assert payload["sub"] == USER_ID
         assert payload["username"] == "testuser"
-        assert payload["profile"] == "file_editor"
+        assert payload["profiles"] == ["ai", "file_editor"]
+        assert "profile" not in payload
         assert payload["must_change_password"] is False
         assert payload["type"] == "access"
 
     def test_must_change_password_flag_is_preserved(self):
-        token = create_access_token(USER_ID, "u", "file_editor", True)
+        token = create_access_token(USER_ID, "u", ["file_editor"], True)
         assert decode_token(token)["must_change_password"] is True
 
     def test_has_exp_and_iat(self):
-        payload = decode_token(create_access_token(USER_ID, "u", "file_editor", False))
+        payload = decode_token(create_access_token(USER_ID, "u", ["file_editor"], False))
         assert payload["exp"] > payload["iat"]
 
     def test_expires_according_to_settings(self):
-        payload = decode_token(create_access_token(USER_ID, "u", "file_editor", False))
+        payload = decode_token(create_access_token(USER_ID, "u", ["file_editor"], False))
         lifetime = payload["exp"] - payload["iat"]
         expected = get_settings().ACCESS_TOKEN_EXPIRE_MINUTES * 60
         assert abs(lifetime - expected) <= 1
 
     def test_is_signed_with_rs256(self):
-        token = create_access_token(USER_ID, "u", "file_editor", False)
+        token = create_access_token(USER_ID, "u", ["file_editor"], False)
         assert pyjwt.get_unverified_header(token)["alg"] == "RS256"
 
     def test_token_is_a_string(self):
-        assert isinstance(create_access_token(USER_ID, "u", "file_editor", False), str)
+        assert isinstance(create_access_token(USER_ID, "u", ["file_editor"], False), str)
 
 
 class TestRefreshToken:
@@ -186,13 +187,14 @@ class TestRefreshToken:
 
     def test_lives_longer_than_access_token(self):
         refresh, _ = create_refresh_token(USER_ID)
-        access = create_access_token(USER_ID, "u", "file_editor", False)
+        access = create_access_token(USER_ID, "u", ["file_editor"], False)
         assert decode_token(refresh)["exp"] > decode_token(access)["exp"]
 
     def test_does_not_carry_profile_claims(self):
         """Refresh token só serve para renovar — não deve carregar autorização."""
         payload = decode_token(create_refresh_token(USER_ID)[0])
         assert "profile" not in payload
+        assert "profiles" not in payload
         assert "must_change_password" not in payload
 
 
@@ -200,7 +202,7 @@ class TestDecodeTokenRejections:
     def test_expired_token_raises_token_expired(self):
         expired = _settings_with(ACCESS_TOKEN_EXPIRE_MINUTES=-5)
         with patch("app.core.security.get_settings", return_value=expired):
-            token = create_access_token(USER_ID, "u", "file_editor", False)
+            token = create_access_token(USER_ID, "u", ["file_editor"], False)
             with pytest.raises(TokenExpiredError):
                 decode_token(token)
 
@@ -213,11 +215,11 @@ class TestDecodeTokenRejections:
             decode_token("")
 
     def test_tampered_payload_raises_token_invalid(self):
-        token = create_access_token(USER_ID, "u", "file_editor", False)
+        token = create_access_token(USER_ID, "u", ["file_editor"], False)
         header, payload, signature = token.split(".")
 
         decoded = json.loads(base64.urlsafe_b64decode(payload + "=="))
-        decoded["profile"] = "airline_company"  # escalada de privilégio
+        decoded["profiles"] = ["airline_company", "ai"]  # escalada de privilégio
         forged = base64.urlsafe_b64encode(json.dumps(decoded).encode()).decode().rstrip("=")
 
         with pytest.raises(TokenInvalidError):

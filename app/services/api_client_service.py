@@ -56,8 +56,9 @@ class ApiClientService:
     async def create_client(
         self,
         name: str,
-        profile_name: str,
+        profile_names: list[str],
         description: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> tuple[ApiClient, str]:
         """
         Cria o cliente e devolve (cliente, chave_em_claro).
@@ -68,16 +69,29 @@ class ApiClientService:
         if await self._repo.get_by_name(name):
             raise ApiClientAlreadyExistsError(name)
 
-        profile = await self._users.get_profile_by_name(profile_name)
-        if not profile:
-            raise AppException(f"Perfil '{profile_name}' não encontrado", 400)
+        profiles = await self._users.get_profiles_by_names(profile_names)
+        missing = set(profile_names) - {p.name for p in profiles}
+        if missing:
+            raise AppException(f"Perfis não encontrados: {', '.join(sorted(missing))}", 400)
+
+        if user_id is not None:
+            owner = await self._users.get_by_id(user_id)
+            if not owner:
+                raise AppException("Usuário dono da chave não encontrado", 400)
+            # A chave nunca dá ao dono acesso que ele não tem pelo próprio login.
+            beyond = set(profile_names) - set(owner.profile_names)
+            if beyond:
+                raise AppException(
+                    f"Perfis fora dos do usuário dono: {', '.join(sorted(beyond))}", 400
+                )
 
         raw_key = generate_api_key()
         client = await self._repo.create(
             name=name,
             key_hash=hash_api_key(raw_key),
-            profile_id=str(profile.id),
+            profile_ids=[str(p.id) for p in profiles],
             description=description,
+            user_id=user_id,
         )
         return client, raw_key
 
@@ -94,6 +108,14 @@ class ApiClientService:
         client = await self._repo.get_by_key_hash(hash_api_key(raw_key))
         if not client or client.revoked:
             return None
+
+        if client.user_id is not None:
+            # Revalidado a cada request: bloquear o dono ou tirar um perfil
+            # dele vale na hora para as chaves dele, sem revogar uma a uma.
+            owner = await self._users.get_by_id(client.user_id)
+            if not owner or not owner.is_active:
+                return None
+            client.profile_names = sorted(set(client.profile_names) & set(owner.profile_names))
 
         await self._repo.touch_last_used(client.id, datetime.now(timezone.utc))
         return client

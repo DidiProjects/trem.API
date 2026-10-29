@@ -124,7 +124,6 @@ CREATE TABLE users (
     username                     VARCHAR(100) UNIQUE NOT NULL,
     email                        VARCHAR(255) UNIQUE,
     password_hash                TEXT NOT NULL,
-    profile_id                   UUID NOT NULL REFERENCES profiles(id),
     status                       VARCHAR(20) NOT NULL DEFAULT 'blocked',
     must_change_password         BOOLEAN NOT NULL DEFAULT TRUE,
     provisional_password_sent_at TIMESTAMPTZ,
@@ -132,6 +131,19 @@ CREATE TABLE users (
     updated_at                   TIMESTAMPTZ DEFAULT NOW(),
     last_login_at                TIMESTAMPTZ
 );
+
+-- Perfis de cada usuário e de cada chave: um conjunto, não um só
+CREATE TABLE user_profiles (
+    user_id    UUID REFERENCES users(id) ON DELETE CASCADE,
+    profile_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
+    PRIMARY KEY (user_id, profile_id)
+);
+CREATE TABLE api_client_profiles (
+    client_id  UUID REFERENCES api_clients(id) ON DELETE CASCADE,
+    profile_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
+    PRIMARY KEY (client_id, profile_id)
+);
+-- api_clients.user_id: dono da chave (NULL = chave de serviço), ON DELETE CASCADE
 
 -- Tokens de refresh (controle de sessão)
 CREATE TABLE refresh_tokens (
@@ -150,9 +162,17 @@ CREATE TABLE refresh_tokens (
 
 ```sql
 INSERT INTO profiles (name, description) VALUES
-  ('file_editor',     'Acesso aos serviços de manipulação de arquivos'),
-  ('airline_company', 'Acesso a informações de empresas aéreas');
+  ('file_editor',      'Acesso aos serviços de manipulação de arquivos'),
+  ('airline_company',  'Acesso a informações de empresas aéreas'),
+  ('ai',               'Acesso ao modelo de linguagem (/llm)'),          -- 004
+  ('linkedin_scraper', 'Acesso aos jobs de scraping do LinkedIn');      -- 004
 ```
+
+A migration 004 trocou o perfil único (`profile_id`) pelo conjunto: todo usuário
+existente recebeu todos os perfis, e toda chave existente manteve o seu e ganhou
+`ai` (antes dela o `/llm` aceitava qualquer chave). `users.profile_id` e
+`api_clients.profile_id` continuam no banco, opcionais e sem uso pelo código, para
+o downgrade devolver o perfil exato de cada linha; saem numa migration posterior.
 
 ### Status possíveis de usuário
 
@@ -185,7 +205,7 @@ credenciais em `/admin/clients` e `/users`. Ela não autentica rotas de negócio
 
 ### API keys por cliente
 
-Cada aplicação consumidora tem a sua chave, com perfil e revogação próprios
+Cada aplicação consumidora tem a sua chave, com perfis e revogação próprios
 (tabela `api_clients`). Isso substitui a chave única compartilhada, que não
 permitia revogar um consumidor sem derrubar todos nem saber quem chamou o quê.
 
@@ -195,10 +215,16 @@ permitia revogar um consumidor sem derrubar todos nem saber quem chamou o quê.
   cliente por índice em vez de varrer a tabela a cada request
 - Devolvida em claro **uma única vez**, na criação
 - `last_used_at` registra o uso, para auditoria e detecção de chaves esquecidas
+- Pode ter um **dono** (`user_id`). Os perfis da chave precisam estar entre os do
+  dono na criação, e a cada request valem só os que o dono ainda tem: bloquear o
+  usuário ou tirar um perfil dele vale na hora para as chaves dele. O `Principal`
+  carrega o `user_id`, que é a quem pertencem os recursos pessoais (jobs de
+  scraping), para sobreviverem à rotação da chave. Sem dono é chave de serviço
 
 ```bash
 # Bootstrap (primeiro cliente, antes de existir chave para chamar a API)
 python -m scripts.manage_api_clients create flight-api --profile airline_company
+python -m scripts.manage_api_clients create diego-ai --profile ai --profile linkedin_scraper --user diego
 python -m scripts.manage_api_clients list
 python -m scripts.manage_api_clients revoke <client_id>
 ```
@@ -237,7 +263,7 @@ parallelism  = 4 threads
 {
   "sub": "uuid-do-usuario",
   "username": "nome_usuario",
-  "profile": "file_editor",
+  "profiles": ["ai", "file_editor"],
   "must_change_password": false,
   "iat": 1234567890,
   "exp": 1234567890,
@@ -315,6 +341,10 @@ parallelism  = 4 threads
 | GET    | `/users/{id}`                            | API Key  | Detalha usuário                 |
 | POST   | `/users/{id}/send-provisional-password`  | API Key  | Envia senha provisória por email|
 
+`POST /users` recebe `profile_names` (lista, ao menos um). `POST /admin/clients`
+recebe `profile_names` e, opcionalmente, `user_id` do dono. O antigo
+`profile_name` (um só) responde 422.
+
 ### Arquivos — autenticados via JWT + perfil `file_editor`
 
 | Método | Path                  |
@@ -335,7 +365,7 @@ parallelism  = 4 threads
 |--------|-----------------|----------------------------------------|
 | GET    | `/airline/*`    | Proxy para API aérea na rede Docker    |
 
-### LLM — qualquer principal autenticado
+### LLM — perfil `ai`
 
 | Método | Path                         | Descrição                                   |
 |--------|------------------------------|---------------------------------------------|

@@ -53,7 +53,7 @@ def generate_provisional_password(length: int = 14) -> str:
 def create_access_token(
     user_id: str,
     username: str,
-    profile: str,
+    profiles: list[str],
     must_change_password: bool,
 ) -> str:
     settings = get_settings()
@@ -61,7 +61,7 @@ def create_access_token(
     payload = {
         "sub": user_id,
         "username": username,
-        "profile": profile,
+        "profiles": sorted(profiles),
         "must_change_password": must_change_password,
         "iat": now,
         "exp": now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),

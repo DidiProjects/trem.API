@@ -18,15 +18,15 @@ from app.infrastructure.database.models import (
     ProfileModel,
     RefreshTokenModel,
     UserModel,
+    user_profiles,
 )
 
 
-def _user(profile_id, username="alguem", **kwargs):
+def _user(username="alguem", **kwargs):
     params = {
         "username": username,
         "email": f"{username}@example.com",
         "password_hash": "$argon2id$hash",
-        "profile_id": uuid.UUID(profile_id) if isinstance(profile_id, str) else profile_id,
     }
     params.update(kwargs)
     return UserModel(**params)
@@ -39,6 +39,8 @@ class TestMetadata:
             "users",
             "refresh_tokens",
             "api_clients",
+            "user_profiles",
+            "api_client_profiles",
         }
 
     def test_refresh_token_indexes_are_declared(self):
@@ -57,32 +59,32 @@ class TestMetadata:
 
 class TestUserDefaults:
     async def test_new_user_is_blocked(self, db_session, seeded_profiles):
-        user = _user(seeded_profiles[ProfileName.FILE_EDITOR.value])
+        user = _user()
         db_session.add(user)
         await db_session.flush()
         assert user.status == UserStatus.BLOCKED.value
 
     async def test_new_user_must_change_password(self, db_session, seeded_profiles):
-        user = _user(seeded_profiles[ProfileName.FILE_EDITOR.value])
+        user = _user()
         db_session.add(user)
         await db_session.flush()
         assert user.must_change_password is True
 
     async def test_id_is_generated(self, db_session, seeded_profiles):
-        user = _user(seeded_profiles[ProfileName.FILE_EDITOR.value])
+        user = _user()
         db_session.add(user)
         await db_session.flush()
         assert isinstance(user.id, uuid.UUID)
 
     async def test_timestamps_are_populated(self, db_session, seeded_profiles):
-        user = _user(seeded_profiles[ProfileName.FILE_EDITOR.value])
+        user = _user()
         db_session.add(user)
         await db_session.flush()
         assert user.created_at is not None
         assert user.updated_at is not None
 
     async def test_optional_fields_start_null(self, db_session, seeded_profiles):
-        user = _user(seeded_profiles[ProfileName.FILE_EDITOR.value])
+        user = _user()
         db_session.add(user)
         await db_session.flush()
         assert user.last_login_at is None
@@ -91,27 +93,24 @@ class TestUserDefaults:
 
 class TestUserConstraints:
     async def test_username_is_unique(self, db_session, seeded_profiles):
-        pid = seeded_profiles[ProfileName.FILE_EDITOR.value]
-        db_session.add(_user(pid, "duplicado", email="a@example.com"))
+        db_session.add(_user("duplicado", email="a@example.com"))
         await db_session.flush()
 
-        db_session.add(_user(pid, "duplicado", email="b@example.com"))
+        db_session.add(_user("duplicado", email="b@example.com"))
         with pytest.raises(IntegrityError):
             await db_session.flush()
 
     async def test_email_is_unique(self, db_session, seeded_profiles):
-        pid = seeded_profiles[ProfileName.FILE_EDITOR.value]
-        db_session.add(_user(pid, "user-a", email="mesmo@example.com"))
+        db_session.add(_user("user-a", email="mesmo@example.com"))
         await db_session.flush()
 
-        db_session.add(_user(pid, "user-b", email="mesmo@example.com"))
+        db_session.add(_user("user-b", email="mesmo@example.com"))
         with pytest.raises(IntegrityError):
             await db_session.flush()
 
     async def test_multiple_users_may_have_null_email(self, db_session, seeded_profiles):
-        pid = seeded_profiles[ProfileName.FILE_EDITOR.value]
-        db_session.add(_user(pid, "user-a", email=None))
-        db_session.add(_user(pid, "user-b", email=None))
+        db_session.add(_user("user-a", email=None))
+        db_session.add(_user("user-b", email=None))
         await db_session.flush()  # NULL não colide em índice único
 
     @pytest.mark.parametrize(
@@ -120,7 +119,6 @@ class TestUserConstraints:
     async def test_valid_status_is_accepted(self, db_session, seeded_profiles, status):
         db_session.add(
             _user(
-                seeded_profiles[ProfileName.FILE_EDITOR.value],
                 f"user-{status.value}",
                 status=status.value,
             )
@@ -133,7 +131,6 @@ class TestUserConstraints:
         """A regra de status vive no banco, não só na aplicação."""
         db_session.add(
             _user(
-                seeded_profiles[ProfileName.FILE_EDITOR.value],
                 "invalido",
                 status="superadmin",
             )
@@ -142,18 +139,36 @@ class TestUserConstraints:
             await db_session.flush()
 
     async def test_password_hash_is_required(self, db_session, seeded_profiles):
-        user = UserModel(
-            username="sem-hash",
-            profile_id=uuid.UUID(seeded_profiles[ProfileName.FILE_EDITOR.value]),
-        )
+        user = UserModel(username="sem-hash")
         db_session.add(user)
         with pytest.raises(IntegrityError):
             await db_session.flush()
 
     async def test_unknown_profile_is_rejected(self, db_session, seeded_profiles):
-        db_session.add(_user(uuid.uuid4(), "orfao"))
+        user = _user("orfao")
+        db_session.add(user)
+        await db_session.flush()
         with pytest.raises(IntegrityError):
-            await db_session.flush()
+            await db_session.execute(
+                user_profiles.insert().values(user_id=user.id, profile_id=uuid.uuid4())
+            )
+
+    async def test_user_may_hold_several_profiles(self, db_session, seeded_profiles):
+        names = [ProfileName.FILE_EDITOR.value, ProfileName.AI.value]
+        profiles = [await db_session.get(ProfileModel, uuid.UUID(seeded_profiles[n])) for n in names]
+        user = _user("varios", profiles=profiles)
+        db_session.add(user)
+        await db_session.flush()
+        assert {p.name for p in user.profiles} == set(names)
+
+    async def test_same_profile_twice_is_rejected(self, db_session, seeded_profiles):
+        user = _user("repetido")
+        db_session.add(user)
+        await db_session.flush()
+        pid = uuid.UUID(seeded_profiles[ProfileName.AI.value])
+        await db_session.execute(user_profiles.insert().values(user_id=user.id, profile_id=pid))
+        with pytest.raises(IntegrityError):
+            await db_session.execute(user_profiles.insert().values(user_id=user.id, profile_id=pid))
 
 
 class TestProfileConstraints:
@@ -167,11 +182,13 @@ class TestProfileConstraints:
         with pytest.raises(IntegrityError):
             await db_session.flush()
 
-    async def test_seed_creates_both_profiles(self, db_session, seeded_profiles):
+    async def test_seed_creates_every_profile(self, db_session, seeded_profiles):
         result = await db_session.execute(select(ProfileModel.name))
         assert set(result.scalars().all()) == {
             ProfileName.FILE_EDITOR.value,
             ProfileName.AIRLINE_COMPANY.value,
+            ProfileName.AI.value,
+            ProfileName.LINKEDIN_SCRAPER.value,
         }
 
 
@@ -220,12 +237,12 @@ class TestRefreshTokenModel:
 
 
 class TestRelationships:
-    async def test_user_exposes_profile(self, db_session, persisted_user):
-        assert persisted_user.profile.name == ProfileName.FILE_EDITOR.value
+    async def test_user_exposes_profiles(self, db_session, persisted_user):
+        assert [p.name for p in persisted_user.profiles] == [ProfileName.FILE_EDITOR.value]
 
     async def test_profile_exposes_users(self, db_session, persisted_user):
         profile = await db_session.get(
-            ProfileModel, persisted_user.profile_id, options=[]
+            ProfileModel, persisted_user.profiles[0].id, options=[]
         )
         await db_session.refresh(profile, ["users"])
         assert persisted_user.username in {u.username for u in profile.users}
@@ -246,4 +263,4 @@ class TestRepr:
         assert "segredo-absoluto" not in repr(token)
 
     async def test_profile_repr_includes_name(self, db_session, persisted_user):
-        assert ProfileName.FILE_EDITOR.value in repr(persisted_user.profile)
+        assert ProfileName.FILE_EDITOR.value in repr(persisted_user.profiles[0])
