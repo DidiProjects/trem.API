@@ -64,6 +64,13 @@ class Settings(BaseSettings):
     LLM_WARMUP_SECONDS: int = 210  # measured cold reload, model file out of page cache
     LLM_JOB_TTL_SECONDS: int = 3600  # finished jobs hold personal data; poll within 1 h
 
+    # LinkedIn scraper orchestrator (linkedinho), internal Docker network only.
+    # SCRAPER_API_KEY is the orchestrator's INTERNAL_API_KEY; it trusts X-Owner-Id only with it.
+    SCRAPER_API_URL: Optional[str] = None
+    SCRAPER_API_KEY: Optional[str] = None
+    SCRAPER_TIMEOUT: int = 30
+    SCRAPER_MAX_REQUEST_SIZE: int = 3 * 1024 * 1024  # job JSON or a CV; the orchestrator caps CVs at 2 MB
+
     def jwt_private_key_pem(self) -> str:
         return self.JWT_PRIVATE_KEY.replace("\\n", "\n")
 
