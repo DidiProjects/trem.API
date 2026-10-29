@@ -31,6 +31,7 @@
             <button class="main-tab" data-section="movies">Movies</button>
             <button class="main-tab" data-section="audio">Audio</button>
             <button class="main-tab" data-section="ai">AI</button>
+            <button class="main-tab" data-section="scrapers">Scrapers</button>
             <button class="main-tab" data-section="others">Others</button>
         </div>
 
@@ -41,6 +42,7 @@
                 <option value="movies">Movies</option>
                 <option value="audio">Audio</option>
                 <option value="ai">AI</option>
+                <option value="scrapers">Scrapers</option>
                 <option value="others">Others</option>
             </select>
         </div>
@@ -902,6 +904,131 @@ For specific formats, adjustments may be necessary.</pre>
                         <span id="aiSize"></span>
                     </div>
                 </section>
+            </div>
+        </div>
+
+        <div class="section-content" id="section-scrapers">
+            <div class="scr">
+                <div class="scr-head">
+                    <div>
+                        <h3>LinkedIn</h3>
+                        <p class="scr-sub">Jobs and posts from the last 24 h, scored against your CV.</p>
+                    </div>
+                    <div class="scr-session">
+                        <span class="scr-dot" id="scrSessionDot"></span>
+                        <span id="scrSessionLabel">checking…</span>
+                        <button type="button" class="scr-link hidden" id="scrDisconnect">Disconnect</button>
+                    </div>
+                </div>
+                <p class="scr-note hidden" id="scrLoginNote">
+                    Connecting LinkedIn from this page comes next. Until then an admin logs you in on the
+                    server, and your jobs start on their own once the session is there.
+                </p>
+
+                <div class="scr-toolbar">
+                    <button type="button" class="btn-primary" id="scrNew">+ New job</button>
+                    <button type="button" class="btn-secondary" id="scrRefresh">Refresh</button>
+                </div>
+
+                <p class="scr-empty hidden" id="scrEmpty">No jobs yet. Create one, upload your CV, and it runs on its schedule.</p>
+                <div class="scr-jobs" id="scrJobs"></div>
+
+                <form class="api-form scr-form hidden" id="scrForm">
+                    <h4 id="scrFormTitle">New job</h4>
+                    <div class="form-group">
+                        <label for="scrName">Name</label>
+                        <input type="text" id="scrName" maxlength="100" required placeholder="UK frontend">
+                    </div>
+                    <div class="scr-grid">
+                        <div class="form-group">
+                            <label for="scrJobKeywords">Job searches</label>
+                            <textarea id="scrJobKeywords" rows="3" required placeholder='("React" OR "frontend") AND "TypeScript"'></textarea>
+                            <small>One per line, LinkedIn boolean syntax, up to 5</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="scrLocations">Locations</label>
+                            <textarea id="scrLocations" rows="3" required placeholder="United Kingdom"></textarea>
+                            <small>One per line; each search runs in each location</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="scrPostKeywords">Post searches</label>
+                            <textarea id="scrPostKeywords" rows="3" placeholder='("TypeScript" OR "JavaScript") AND ("London" OR "UK")'></textarea>
+                            <small>Optional. Posts have no location filter: put it in the query</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="scrCriteria">What you are looking for</label>
+                            <textarea id="scrCriteria" rows="3" maxlength="4000" required placeholder="Frontend roles in the UK, hybrid in London or remote…"></textarea>
+                            <small>Read by the model together with your CV</small>
+                        </div>
+                    </div>
+                    <div class="scr-grid scr-grid-4">
+                        <div class="form-group">
+                            <label for="scrMaxPages">Job pages</label>
+                            <input type="number" id="scrMaxPages" min="1" max="3" value="2">
+                        </div>
+                        <div class="form-group">
+                            <label for="scrMaxScrolls">Post scrolls</label>
+                            <input type="number" id="scrMaxScrolls" min="1" max="15" value="10">
+                        </div>
+                        <div class="form-group">
+                            <label for="scrMinScore">Email from score</label>
+                            <input type="number" id="scrMinScore" min="0" max="100" value="70">
+                        </div>
+                        <div class="form-group">
+                            <label for="scrMaxItems">Items per turn</label>
+                            <input type="number" id="scrMaxItems" min="1" max="30" value="30">
+                        </div>
+                    </div>
+                    <div class="scr-grid">
+                        <div class="form-group">
+                            <label>Days</label>
+                            <div class="scr-days" id="scrDays"></div>
+                        </div>
+                        <div class="form-group">
+                            <label for="scrTimes">Times</label>
+                            <input type="text" id="scrTimes" required value="07:00, 13:00, 19:00">
+                            <small>HH:MM, at least 1 h apart, up to 8 a day</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="scrTimezone">Timezone</label>
+                            <input type="text" id="scrTimezone" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="scrEffort">Model effort</label>
+                            <select id="scrEffort">
+                                <option value="low">Low (fastest)</option>
+                                <option value="medium">Medium</option>
+                                <option value="high">High</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="scrNotify">Email matches to</label>
+                        <input type="email" id="scrNotify" required placeholder="you@example.com">
+                    </div>
+                    <div class="form-group" id="scrCvGroup">
+                        <label for="scrCv">CV (.docx)</label>
+                        <input type="file" id="scrCv" accept=".docx">
+                        <small>Kept encrypted; only the model reads it, to score each item</small>
+                    </div>
+                    <div class="scr-form-actions">
+                        <button type="submit" class="btn-primary" id="scrSave">Create job</button>
+                        <button type="button" class="btn-secondary" id="scrCancel">Cancel</button>
+                    </div>
+                </form>
+
+                <div class="scr-matches hidden" id="scrMatches">
+                    <div class="scr-matches-head">
+                        <h4 id="scrMatchesTitle">Matches</h4>
+                        <label class="scr-inline">
+                            <input type="checkbox" id="scrOnlyRelevant" checked> from email score
+                        </label>
+                        <button type="button" class="scr-link" id="scrCloseMatches">Close</button>
+                    </div>
+                    <div id="scrMatchesBody"></div>
+                </div>
+
+                <input type="file" id="scrCvReplace" accept=".docx" class="hidden">
             </div>
         </div>
 
