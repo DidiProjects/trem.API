@@ -151,13 +151,13 @@ class TestLogin:
         await service.login("testuser", SENHA)
         repo.update_password.assert_not_awaited()
 
-    async def test_access_token_carries_profile(self, service, repo):
+    async def test_access_token_carries_profiles(self, service, repo):
         from app.core.security import decode_token
 
-        repo.get_by_username.return_value = _user(profile_name="airline_company")
+        repo.get_by_username.return_value = _user(profile_names=("airline_company", "ai"))
         result = await service.login("testuser", SENHA)
 
-        assert decode_token(result.access_token)["profile"] == "airline_company"
+        assert decode_token(result.access_token)["profiles"] == ["ai", "airline_company"]
 
 
 class TestRefresh:
@@ -187,7 +187,7 @@ class TestRefresh:
     async def test_access_token_is_rejected(self, service, repo):
         """Um access token não pode ser usado para renovar sessão."""
         access = create_access_token(
-            "00000000-0000-0000-0000-000000000001", "testuser", "file_editor", False
+            "00000000-0000-0000-0000-000000000001", "testuser", ["file_editor"], False
         )
         with pytest.raises(InvalidCredentialsError):
             await service.refresh(access)

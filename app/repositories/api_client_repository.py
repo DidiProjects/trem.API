@@ -3,11 +3,10 @@ from typing import Optional
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload
 
 from app.core.interfaces.i_api_client_repository import IApiClientRepository
 from app.domain.entities.api_client import ApiClient
-from app.infrastructure.database.models import ApiClientModel
+from app.infrastructure.database.models import ApiClientModel, ProfileModel
 from app.repositories.base import BaseRepository
 from app.repositories.user_repository import _as_uuid
 
@@ -17,11 +16,11 @@ def _to_entity(orm: ApiClientModel) -> ApiClient:
         id=str(orm.id),
         name=orm.name,
         description=orm.description,
-        profile_id=str(orm.profile_id),
-        profile_name=orm.profile.name if orm.profile else "",
+        profile_names=sorted(p.name for p in orm.profiles),
         revoked=orm.revoked,
         last_used_at=orm.last_used_at,
         created_at=orm.created_at,
+        user_id=str(orm.user_id) if orm.user_id else None,
     )
 
 
@@ -34,7 +33,6 @@ class ApiClientRepository(BaseRepository, IApiClientRepository):
         """Caminho quente: roda em toda request autenticada por API key."""
         result = await self._session.execute(
             select(ApiClientModel)
-            .options(joinedload(ApiClientModel.profile))
             .where(ApiClientModel.key_hash == key_hash)
         )
         orm = result.scalar_one_or_none()
@@ -46,7 +44,6 @@ class ApiClientRepository(BaseRepository, IApiClientRepository):
             return None
         result = await self._session.execute(
             select(ApiClientModel)
-            .options(joinedload(ApiClientModel.profile))
             .where(ApiClientModel.id == cid)
         )
         orm = result.scalar_one_or_none()
@@ -55,7 +52,6 @@ class ApiClientRepository(BaseRepository, IApiClientRepository):
     async def get_by_name(self, name: str) -> Optional[ApiClient]:
         result = await self._session.execute(
             select(ApiClientModel)
-            .options(joinedload(ApiClientModel.profile))
             .where(ApiClientModel.name == name)
         )
         orm = result.scalar_one_or_none()
@@ -65,18 +61,23 @@ class ApiClientRepository(BaseRepository, IApiClientRepository):
         self,
         name: str,
         key_hash: str,
-        profile_id: str,
+        profile_ids: list[str],
         description: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> ApiClient:
+        ids = [i for i in (_as_uuid(p) for p in profile_ids) if i]
+        profiles = (
+            await self._session.execute(select(ProfileModel).where(ProfileModel.id.in_(ids)))
+        ).scalars().all()
         orm = ApiClientModel(
             name=name,
             key_hash=key_hash,
-            profile_id=_as_uuid(profile_id),
+            profiles=list(profiles),
             description=description,
+            user_id=_as_uuid(user_id),
         )
         self._session.add(orm)
         await self._session.flush()
-        await self._session.refresh(orm, ["profile"])
         return _to_entity(orm)
 
     async def revoke(self, client_id: str) -> None:
@@ -96,7 +97,6 @@ class ApiClientRepository(BaseRepository, IApiClientRepository):
     async def list_all(self, limit: int = 50, offset: int = 0) -> list[ApiClient]:
         result = await self._session.execute(
             select(ApiClientModel)
-            .options(joinedload(ApiClientModel.profile))
             .order_by(ApiClientModel.created_at.desc())
             .limit(limit)
             .offset(offset)

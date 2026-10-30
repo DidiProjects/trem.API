@@ -10,7 +10,7 @@ from typing import Optional
 from fastapi import APIRouter, Body, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
-from app.api.v1.dependencies import get_current_principal
+from app.api.v1.dependencies import require_profile
 from app.core.config import get_settings
 from app.domain.entities.api_client import Principal
 from app.infrastructure.http.llm_client import LlmApiError, LlmClient
@@ -18,6 +18,8 @@ from app.infrastructure.http.llm_client import LlmApiError, LlmClient
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+ai = require_profile("ai")
 
 
 class LlmQueue:
@@ -251,7 +253,7 @@ _jobs = LlmJobs()
 @router.post("/v1/chat/completions")
 async def chat_completions(
     body: dict = Body(...),
-    principal: Principal = Depends(get_current_principal),
+    principal: Principal = Depends(ai),
 ):
     """
     OpenAI-compatible chat completion, without streaming. `model` is ignored
@@ -284,7 +286,7 @@ async def chat_completions(
 @router.post("/jobs", status_code=202)
 async def submit_job(
     body: dict = Body(...),
-    principal: Principal = Depends(get_current_principal),
+    principal: Principal = Depends(ai),
 ):
     """
     Same body as /v1/chat/completions, answered at once with a `job_id` to poll.
@@ -300,14 +302,14 @@ async def submit_job(
 @router.get("/jobs/{job_id}")
 async def get_job(
     job_id: str,
-    principal: Principal = Depends(get_current_principal),
+    principal: Principal = Depends(ai),
 ):
     """Job state: queued, running, done (with `result`) or failed (with `error`)."""
     return _jobs.get(principal.id, job_id, get_settings().LLM_JOB_TTL_SECONDS).body()
 
 
 @router.get("/health")
-async def llm_health(_: Principal = Depends(get_current_principal)):
+async def llm_health(_: Principal = Depends(ai)):
     try:
         client = LlmClient()
         if not await client.health_check():

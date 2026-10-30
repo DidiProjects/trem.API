@@ -99,7 +99,7 @@ class TestApiClientRepository:
         params = {
             "name": name,
             "key_hash": hash_api_key(f"key-{name}"),
-            "profile_id": seeded_profiles[ProfileName.FILE_EDITOR.value],
+            "profile_ids": [seeded_profiles[ProfileName.FILE_EDITOR.value]],
         }
         params.update(kwargs)
         return await repo.create(**params)
@@ -108,7 +108,7 @@ class TestApiClientRepository:
         client = await self._create(repo, seeded_profiles)
         assert isinstance(client, ApiClient)
         assert client.name == "cliente"
-        assert client.profile_name == ProfileName.FILE_EDITOR.value
+        assert client.profile_names == [ProfileName.FILE_EDITOR.value]
 
     async def test_create_defaults_to_active(self, repo, seeded_profiles):
         client = await self._create(repo, seeded_profiles)
@@ -154,7 +154,7 @@ class TestApiClientRepository:
             await repo.create(
                 name="duplicado",
                 key_hash=hash_api_key("outra-chave"),
-                profile_id=seeded_profiles[ProfileName.FILE_EDITOR.value],
+                profile_ids=[seeded_profiles[ProfileName.FILE_EDITOR.value]],
             )
 
     async def test_key_hash_is_unique(self, db_session, repo, seeded_profiles):
@@ -164,7 +164,7 @@ class TestApiClientRepository:
             await repo.create(
                 name="cliente-b",
                 key_hash=hash_api_key("key-cliente-a"),
-                profile_id=seeded_profiles[ProfileName.FILE_EDITOR.value],
+                profile_ids=[seeded_profiles[ProfileName.FILE_EDITOR.value]],
             )
 
     async def test_list_and_count(self, repo, seeded_profiles):
@@ -178,7 +178,6 @@ class TestApiClientRepository:
         orm = ApiClientModel(
             name="secreto",
             key_hash="hash-super-secreto",
-            profile_id=uuid.UUID(seeded_profiles[ProfileName.FILE_EDITOR.value]),
         )
         assert "hash-super-secreto" not in repr(orm)
 
@@ -190,31 +189,31 @@ class TestApiClientRepository:
 class TestApiClientService:
     async def test_create_returns_client_and_raw_key(self, service, seeded_profiles):
         client, raw_key = await service.create_client(
-            name="flight-api", profile_name=ProfileName.AIRLINE_COMPANY.value
+            name="flight-api", profile_names=[ProfileName.AIRLINE_COMPANY.value]
         )
         assert client.name == "flight-api"
         assert raw_key.startswith(API_KEY_PREFIX)
 
     async def test_create_assigns_requested_profile(self, service, seeded_profiles):
         client, _ = await service.create_client(
-            name="flight-api", profile_name=ProfileName.AIRLINE_COMPANY.value
+            name="flight-api", profile_names=[ProfileName.AIRLINE_COMPANY.value]
         )
-        assert client.profile_name == ProfileName.AIRLINE_COMPANY.value
+        assert client.profile_names == [ProfileName.AIRLINE_COMPANY.value]
 
     async def test_duplicate_name_raises(self, service, seeded_profiles):
-        await service.create_client(name="dup", profile_name="file_editor")
+        await service.create_client(name="dup", profile_names=["file_editor"])
         with pytest.raises(ApiClientAlreadyExistsError):
-            await service.create_client(name="dup", profile_name="file_editor")
+            await service.create_client(name="dup", profile_names=["file_editor"])
 
     async def test_unknown_profile_raises(self, service, seeded_profiles):
         from app.core.exceptions import AppException
 
         with pytest.raises(AppException):
-            await service.create_client(name="x", profile_name="inexistente")
+            await service.create_client(name="x", profile_names=["inexistente"])
 
     async def test_authenticate_accepts_issued_key(self, service, seeded_profiles):
         _, raw_key = await service.create_client(
-            name="playground", profile_name="file_editor"
+            name="playground", profile_names=["file_editor"]
         )
         client = await service.authenticate(raw_key)
         assert client is not None
@@ -228,14 +227,14 @@ class TestApiClientService:
 
     async def test_authenticate_rejects_revoked_key(self, service, seeded_profiles):
         client, raw_key = await service.create_client(
-            name="antigo", profile_name="file_editor"
+            name="antigo", profile_names=["file_editor"]
         )
         await service.revoke_client(client.id)
         assert await service.authenticate(raw_key) is None
 
     async def test_authenticate_records_last_used(self, service, seeded_profiles):
         client, raw_key = await service.create_client(
-            name="usado", profile_name="file_editor"
+            name="usado", profile_names=["file_editor"]
         )
         assert client.last_used_at is None
 
@@ -245,14 +244,14 @@ class TestApiClientService:
     async def test_raw_key_is_not_recoverable(self, service, seeded_profiles):
         """A chave em claro só existe no retorno da criação."""
         client, raw_key = await service.create_client(
-            name="efemera", profile_name="file_editor"
+            name="efemera", profile_names=["file_editor"]
         )
         stored = await service.get_client(client.id)
         assert raw_key not in str(stored.__dict__)
 
     async def test_each_client_gets_a_different_key(self, service, seeded_profiles):
-        _, key_a = await service.create_client(name="a", profile_name="file_editor")
-        _, key_b = await service.create_client(name="b", profile_name="file_editor")
+        _, key_a = await service.create_client(name="a", profile_names=["file_editor"])
+        _, key_b = await service.create_client(name="b", profile_names=["file_editor"])
         assert key_a != key_b
 
     async def test_revoke_unknown_raises(self, service, seeded_profiles):
@@ -265,10 +264,109 @@ class TestApiClientService:
 
     async def test_list_returns_page_and_total(self, service, seeded_profiles):
         for i in range(3):
-            await service.create_client(name=f"c{i}", profile_name="file_editor")
+            await service.create_client(name=f"c{i}", profile_names=["file_editor"])
         clients, total = await service.list_clients(limit=2)
         assert len(clients) == 2
         assert total == 3
+
+
+class TestApiClientProfileSets:
+    """Several profiles per key, and keys owned by a user."""
+
+    async def _owner(self, db_session, seeded_profiles, *names, status="active"):
+        from app.infrastructure.database.models import ProfileModel, UserModel
+
+        profiles = [await db_session.get(ProfileModel, uuid.UUID(seeded_profiles[n])) for n in names]
+        orm = UserModel(
+            username=f"owner-{uuid.uuid4().hex[:6]}",
+            password_hash="x",
+            profiles=profiles,
+            status=status,
+            must_change_password=False,
+        )
+        db_session.add(orm)
+        await db_session.flush()
+        return orm
+
+    async def test_key_with_several_profiles(self, service, seeded_profiles):
+        client, _ = await service.create_client(
+            name="multi", profile_names=["file_editor", "ai"]
+        )
+        assert client.profile_names == ["ai", "file_editor"]
+
+    async def test_service_key_has_no_owner(self, service, seeded_profiles):
+        client, raw_key = await service.create_client(name="svc", profile_names=["ai"])
+        assert client.user_id is None
+        assert (await service.authenticate(raw_key)).profile_names == ["ai"]
+
+    async def test_owned_key_within_owner_profiles(self, db_session, service, seeded_profiles):
+        owner = await self._owner(db_session, seeded_profiles, "ai", "linkedin_scraper")
+        client, _ = await service.create_client(
+            name="mine", profile_names=["linkedin_scraper"], user_id=str(owner.id)
+        )
+        assert client.user_id == str(owner.id)
+        assert client.profile_names == ["linkedin_scraper"]
+
+    async def test_key_cannot_exceed_owner_profiles(self, db_session, service, seeded_profiles):
+        owner = await self._owner(db_session, seeded_profiles, "ai")
+        with pytest.raises(Exception) as exc:
+            await service.create_client(
+                name="escalate", profile_names=["ai", "file_editor"], user_id=str(owner.id)
+            )
+        assert exc.value.status_code == 400
+        assert "file_editor" in exc.value.message
+        assert await service._repo.get_by_name("escalate") is None
+
+    async def test_unknown_owner_is_rejected(self, service, seeded_profiles):
+        with pytest.raises(Exception) as exc:
+            await service.create_client(
+                name="orphan", profile_names=["ai"], user_id=str(uuid.uuid4())
+            )
+        assert exc.value.status_code == 400
+
+    async def test_some_unknown_profiles_are_named(self, service, seeded_profiles):
+        with pytest.raises(Exception) as exc:
+            await service.create_client(name="x", profile_names=["ai", "root", "admin"])
+        assert exc.value.status_code == 400
+        assert "admin, root" in exc.value.message
+
+    async def test_blocked_owner_disables_their_keys(self, db_session, service, seeded_profiles):
+        owner = await self._owner(db_session, seeded_profiles, "ai")
+        _, raw_key = await service.create_client(
+            name="k", profile_names=["ai"], user_id=str(owner.id)
+        )
+        assert await service.authenticate(raw_key) is not None
+
+        owner.status = "suspended"
+        await db_session.flush()
+
+        assert await service.authenticate(raw_key) is None
+
+    async def test_profile_removed_from_owner_leaves_the_key_at_once(
+        self, db_session, service, seeded_profiles
+    ):
+        owner = await self._owner(db_session, seeded_profiles, "ai", "linkedin_scraper")
+        _, raw_key = await service.create_client(
+            name="k", profile_names=["ai", "linkedin_scraper"], user_id=str(owner.id)
+        )
+
+        owner.profiles = [p for p in owner.profiles if p.name == "ai"]
+        await db_session.flush()
+
+        assert (await service.authenticate(raw_key)).profile_names == ["ai"]
+
+    async def test_deleted_owner_removes_their_keys(self, db_session, service, repo, seeded_profiles):
+        owner = await self._owner(db_session, seeded_profiles, "ai")
+        client, raw_key = await service.create_client(
+            name="k", profile_names=["ai"], user_id=str(owner.id)
+        )
+
+        await db_session.delete(owner)
+        await db_session.flush()
+        db_session.expunge_all()
+
+        assert await repo.get_by_id(client.id) is None
+        assert await service.authenticate(raw_key) is None
 
 
 # ---------------------------------------------------------------------------
@@ -281,8 +379,7 @@ class TestPrincipal:
             id="c-1",
             name="flight-api",
             description=None,
-            profile_id="p-1",
-            profile_name=profile,
+            profile_names=[profile],
             revoked=False,
             last_used_at=None,
             created_at=datetime.now(timezone.utc),
@@ -311,6 +408,23 @@ class TestPrincipal:
 
     def test_client_repr_hides_nothing_sensitive(self):
         assert "flight-api" in repr(self._client())
+
+    def test_user_principal_is_its_own_person(self):
+        p = Principal.from_user(make_mock_user())
+        assert p.user_id == p.id
+
+    def test_client_principal_carries_its_owner(self):
+        client = self._client()
+        client.user_id = "u-9"
+        assert Principal.from_client(client).user_id == "u-9"
+
+    def test_service_key_has_no_person(self):
+        assert Principal.from_client(self._client()).user_id is None
+
+    def test_has_profile_checks_membership(self):
+        p = Principal.from_user(make_mock_user(("ai", "file_editor")))
+        assert p.has_profile("ai") and p.has_profile("file_editor")
+        assert not p.has_profile("linkedin_scraper")
 
 
 # ---------------------------------------------------------------------------
@@ -346,8 +460,7 @@ def _api_client(profile=ProfileName.FILE_EDITOR.value, name="flight-api"):
         id="c-1",
         name=name,
         description=None,
-        profile_id="p-1",
-        profile_name=profile,
+        profile_names=[profile],
         revoked=False,
         last_used_at=None,
         created_at=datetime.now(timezone.utc),
@@ -386,6 +499,20 @@ class TestApiKeyAuthorization:
         response = TestClient(probe_app).get(
             "/editor", headers={"X-API-Key": "trem_chave-valida"}
         )
+        assert response.status_code == 403
+
+    def test_profile_among_several_is_accepted(self, probe_app, client_service):
+        client = _api_client(profile=ProfileName.AIRLINE_COMPANY.value)
+        client.profile_names = ["airline_company", "file_editor"]
+        client_service.authenticate.return_value = client
+        response = TestClient(probe_app).get("/editor", headers={"X-API-Key": "trem_x"})
+        assert response.status_code == 200
+
+    def test_no_profiles_returns_403(self, probe_app, client_service):
+        client = _api_client()
+        client.profile_names = []
+        client_service.authenticate.return_value = client
+        response = TestClient(probe_app).get("/editor", headers={"X-API-Key": "trem_x"})
         assert response.status_code == 403
 
     def test_no_credential_returns_401(self, probe_app, client_service):

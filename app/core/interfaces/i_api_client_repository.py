@@ -24,8 +24,9 @@ class IApiClientRepository(ABC):
         self,
         name: str,
         key_hash: str,
-        profile_id: str,
+        profile_ids: list[str],
         description: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> ApiClient:
         ...
 

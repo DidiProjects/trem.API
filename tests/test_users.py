@@ -20,7 +20,7 @@ from tests.conftest import mock_get_db
 
 def _make_user(
     username: str = "testuser",
-    profile_name: str = "file_editor",
+    profile_names: tuple[str, ...] = ("file_editor",),
     status: str = "blocked",
     email: str = "test@example.com",
 ) -> User:
@@ -29,8 +29,7 @@ def _make_user(
         username=username,
         email=email,
         password_hash="$argon2id$placeholder",
-        profile_id="00000000-0000-0000-0000-000000000010",
-        profile_name=profile_name,
+        profile_names=list(profile_names),
         status=status,
         must_change_password=True,
         provisional_password_sent_at=None,
@@ -74,7 +73,7 @@ class TestCreateUser:
                 json={
                     "username": "novousuario",
                     "email": "novo@example.com",
-                    "profile_name": "file_editor",
+                    "profile_names": ["file_editor"],
                 },
             )
         assert response.status_code == 201
@@ -91,7 +90,7 @@ class TestCreateUser:
                 json={
                     "username": "existente",
                     "email": "existente@example.com",
-                    "profile_name": "file_editor",
+                    "profile_names": ["file_editor"],
                 },
             )
         assert response.status_code == 409
@@ -102,7 +101,7 @@ class TestCreateUser:
             json={
                 "username": "usuario",
                 "email": "usuario@example.com",
-                "profile_name": "perfil_invalido",
+                "profile_names": ["perfil_invalido"],
             },
         )
         assert response.status_code == 422
@@ -110,7 +109,7 @@ class TestCreateUser:
     def test_create_user_short_username(self, admin_client):
         response = admin_client.post(
             "/users",
-            json={"username": "ab", "profile_name": "file_editor"},
+            json={"username": "ab", "profile_names": ["file_editor"]},
         )
         assert response.status_code == 422
 
@@ -120,7 +119,7 @@ class TestCreateUser:
             json={
                 "username": "usuario",
                 "email": "nao-e-email",
-                "profile_name": "file_editor",
+                "profile_names": ["file_editor"],
             },
         )
         assert response.status_code == 422
@@ -128,21 +127,39 @@ class TestCreateUser:
     def test_create_user_no_api_key(self, no_auth_client):
         response = no_auth_client.post(
             "/users",
-            json={"username": "usuario", "profile_name": "file_editor"},
+            json={"username": "usuario", "profile_names": ["file_editor"]},
         )
         assert response.status_code == 401
 
     def test_create_airline_company_user(self, admin_client):
         with patch("app.api.v1.routers.users.UserService") as Mock:
             Mock.return_value.create_user = AsyncMock(
-                return_value=_make_user(profile_name="airline_company")
+                return_value=_make_user(profile_names=("airline_company",))
             )
             response = admin_client.post(
                 "/users",
-                json={"username": "aerolinea", "profile_name": "airline_company"},
+                json={"username": "aerolinea", "profile_names": ["airline_company"]},
             )
         assert response.status_code == 201
-        assert response.json()["profile_name"] == "airline_company"
+        assert response.json()["profile_names"] == ["airline_company"]
+
+    def test_create_user_with_several_profiles(self, admin_client):
+        with patch("app.api.v1.routers.users.UserService") as Mock:
+            Mock.return_value.create_user = AsyncMock(
+                return_value=_make_user(profile_names=("ai", "linkedin_scraper"))
+            )
+            response = admin_client.post(
+                "/users",
+                json={"username": "scraper", "profile_names": ["linkedin_scraper", "ai"]},
+            )
+        assert response.status_code == 201
+        assert response.json()["profile_names"] == ["ai", "linkedin_scraper"]
+        sent = Mock.return_value.create_user.await_args.args[0]
+        assert sent.profile_names == ["ai", "linkedin_scraper"]
+
+    def test_create_user_without_profiles_is_422(self, admin_client):
+        response = admin_client.post("/users", json={"username": "usuario", "profile_names": []})
+        assert response.status_code == 422
 
 
 # ---------------------------------------------------------------------------

@@ -134,13 +134,10 @@ async def db_session(db_engine):
 
 @pytest.fixture
 async def seeded_profiles(db_session):
-    """Insere os dois perfis do seed da migration 001 e devolve {nome: id}."""
+    """Insere os perfis do seed das migrations (001 e 004) e devolve {nome: id}."""
     profiles = {}
-    for name, description in [
-        (ProfileName.FILE_EDITOR, "Acesso aos serviços de manipulação de arquivos"),
-        (ProfileName.AIRLINE_COMPANY, "Acesso a informações de empresas aéreas"),
-    ]:
-        orm = ProfileModel(id=uuid.uuid4(), name=name.value, description=description)
+    for name in ProfileName:
+        orm = ProfileModel(id=uuid.uuid4(), name=name.value, description=None)
         db_session.add(orm)
         profiles[name.value] = str(orm.id)
     await db_session.flush()
@@ -149,19 +146,21 @@ async def seeded_profiles(db_session):
 
 @pytest.fixture
 async def persisted_user(db_session, seeded_profiles):
-    """Um usuário ativo já gravado no SQLite, com profile carregado."""
+    """Um usuário ativo já gravado no SQLite, com o perfil file_editor."""
+    file_editor = await db_session.get(
+        ProfileModel, uuid.UUID(seeded_profiles[ProfileName.FILE_EDITOR.value])
+    )
     orm = UserModel(
         id=uuid.uuid4(),
         username="persisted",
         email="persisted@example.com",
         password_hash="$argon2id$placeholder",
-        profile_id=uuid.UUID(seeded_profiles[ProfileName.FILE_EDITOR.value]),
+        profiles=[file_editor],
         status=UserStatus.ACTIVE.value,
         must_change_password=False,
     )
     db_session.add(orm)
     await db_session.flush()
-    await db_session.refresh(orm, ["profile"])
     return orm
 
 
@@ -170,7 +169,7 @@ async def persisted_user(db_session, seeded_profiles):
 # ---------------------------------------------------------------------------
 
 def make_mock_user(
-    profile_name: str = ProfileName.FILE_EDITOR.value,
+    profile_names: tuple[str, ...] = (ProfileName.FILE_EDITOR.value,),
     must_change_password: bool = False,
     status: str = UserStatus.ACTIVE.value,
 ) -> User:
@@ -179,8 +178,7 @@ def make_mock_user(
         username="testuser",
         email="test@example.com",
         password_hash="$argon2id$placeholder",
-        profile_id="00000000-0000-0000-0000-000000000010",
-        profile_name=profile_name,
+        profile_names=list(profile_names),
         status=status,
         must_change_password=must_change_password,
         provisional_password_sent_at=None,
@@ -191,15 +189,19 @@ def make_mock_user(
 
 
 async def _user_file_editor():
-    return make_mock_user(ProfileName.FILE_EDITOR.value)
+    return make_mock_user((ProfileName.FILE_EDITOR.value,))
 
 
 async def _user_must_change():
-    return make_mock_user(ProfileName.FILE_EDITOR.value, must_change_password=True)
+    return make_mock_user((ProfileName.FILE_EDITOR.value,), must_change_password=True)
 
 
 async def _user_airline():
-    return make_mock_user(ProfileName.AIRLINE_COMPANY.value)
+    return make_mock_user((ProfileName.AIRLINE_COMPANY.value,))
+
+
+async def _user_ai():
+    return make_mock_user((ProfileName.AI.value,))
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +239,13 @@ def client_must_change():
 def client_airline():
     """Client autenticado com perfil airline_company."""
     yield _authenticated_as(_user_airline)
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def client_ai():
+    """Client autenticado só com o perfil ai."""
+    yield _authenticated_as(_user_ai)
     app.dependency_overrides.clear()
 
 

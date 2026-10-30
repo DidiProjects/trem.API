@@ -15,6 +15,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     setupMainTabs();
     setupFormHandlers();
     setupAiChat();
+    setupScrapers();
 });
 
 async function loadConfig() {
@@ -1207,4 +1208,404 @@ function aiInline(text) {
         .replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\w)/g, '$1<em>$2</em>')
         .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
         .replace(/\u0000(\d+)\u0000/g, (_, index) => `<code>${codes[Number(index)]}</code>`);
+}
+
+// --- Scrapers: LinkedIn jobs run by the orchestrator, through /scrapers/linkedin ---
+
+const SCR_BASE = '/scrapers/linkedin';
+const SCR_DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+const SCR_REFRESH_MS = 30000;
+const SCR_STATUS = {
+    scheduled: ['Scheduled', 'ok'],
+    needs_cv: ['Needs a CV', 'warn'],
+    needs_login: ['Waiting for LinkedIn login', 'warn'],
+    paused: ['Paused', 'idle'],
+    halted: ['Stopped', 'error'],
+    expired: ['Expired', 'idle']
+};
+const SCR_SESSION = {
+    valid: ['LinkedIn connected', 'ok'],
+    expired: ['LinkedIn session expired', 'error'],
+    none: ['LinkedIn not connected', 'warn']
+};
+
+const scr = { jobs: [], editing: null, cvTarget: null, matchesJob: null, visible: false, busy: false, login: null };
+const SCR_LOGIN_POLL_MS = 3000;
+const SCR_LOGIN_DONE = {
+    connected: ['LinkedIn connected. Your jobs start on their own.', 'success'],
+    expired: ['The LinkedIn login timed out after 10 minutes. Try again.', 'error'],
+    cancelled: ['LinkedIn login cancelled.', 'success'],
+    failed: ['The LinkedIn login failed. Try again.', 'error']
+};
+
+function setupScrapers() {
+    document.getElementById('scrDays').innerHTML = SCR_DAYS
+        .map(day => `<label class="scr-day"><input type="checkbox" value="${day}"> ${day}</label>`)
+        .join('');
+    document.getElementById('scrNew').addEventListener('click', () => scrOpenForm(null));
+    document.getElementById('scrCancel').addEventListener('click', scrCloseForm);
+    document.getElementById('scrRefresh').addEventListener('click', scrLoad);
+    document.getElementById('scrForm').addEventListener('submit', scrSave);
+    document.getElementById('scrJobs').addEventListener('click', scrOnJobClick);
+    document.getElementById('scrCvReplace').addEventListener('change', scrOnCvReplace);
+    document.getElementById('scrCloseMatches').addEventListener('click', () => {
+        scr.matchesJob = null;
+        document.getElementById('scrMatches').classList.add('hidden');
+    });
+    document.getElementById('scrOnlyRelevant').addEventListener('change', () => scrShowMatches(scr.matchesJob));
+    document.getElementById('scrDisconnect').addEventListener('click', scrDisconnect);
+    document.getElementById('scrConnect').addEventListener('click', scrConnect);
+    document.getElementById('apiKey').addEventListener('change', () => { if (scr.visible) scrLoad(); });
+    document.addEventListener('sectionchange', e => {
+        scr.visible = e.detail === 'scrapers';
+        if (scr.visible) scrLoad();
+    });
+    // Status moves on its own (runs, analysis, an expired session): refresh while the tab is open.
+    setInterval(() => {
+        const formOpen = !document.getElementById('scrForm').classList.contains('hidden');
+        if (scr.visible && !formOpen && !scr.busy) scrLoad();
+    }, SCR_REFRESH_MS);
+}
+
+async function scrFetch(path, options = {}) {
+    const key = document.getElementById('apiKey').value;
+    if (!key) throw new Error('Enter an API key with the linkedin_scraper profile');
+    let response;
+    try {
+        response = await fetch(SCR_BASE + path, { ...options, headers: { 'X-API-Key': key, ...options.headers } });
+    } catch (error) {
+        throw new Error('Connection lost, check your network');
+    }
+    if (!response.ok) throw new Error(await scrErrorMessage(response));
+    return response.status === 204 ? null : response.json();
+}
+
+async function scrErrorMessage(response) {
+    let detail = null;
+    try {
+        detail = (await response.json()).detail;
+    } catch (error) {
+        // HTML from a proxy
+    }
+    if (Array.isArray(detail)) {
+        // Validation errors, e.g. "schedule.times: runs must be at least 60 minutes apart"
+        return detail.map(d => `${(d.loc || []).filter(p => p !== 'body').join('.')}: ${d.msg}`).join(' · ');
+    }
+    if (typeof detail === 'string') return detail;
+    return STATUS_MESSAGES[response.status] || `Request failed (${response.status})`;
+}
+
+async function scrLoad() {
+    if (!document.getElementById('apiKey').value) {
+        scrRenderSession(null);
+        scrRenderJobs([], 'Enter an API key with the linkedin_scraper profile to see your jobs.');
+        return;
+    }
+    try {
+        const [session, jobs] = await Promise.all([scrFetch('/session'), scrFetch('/jobs')]);
+        scr.jobs = jobs;
+        scrRenderSession(session.state);
+        scrRenderJobs(jobs);
+    } catch (error) {
+        scr.jobs = [];
+        scrRenderSession(null);
+        scrRenderJobs([], error.message);
+    }
+}
+
+function scrRenderSession(state) {
+    const [label, tone] = SCR_SESSION[state] || ['LinkedIn status unknown', 'idle'];
+    document.getElementById('scrSessionLabel').textContent = label;
+    document.getElementById('scrSessionDot').className = `scr-dot ${tone}`;
+    document.getElementById('scrDisconnect').classList.toggle('hidden', !state || state === 'none');
+    const connect = document.getElementById('scrConnect');
+    connect.classList.toggle('hidden', !state || Boolean(scr.login));
+    connect.textContent = state === 'valid' ? 'Reconnect' : 'Connect LinkedIn';
+    document.getElementById('scrLoginNote').classList.toggle('hidden', !state || state === 'valid' || Boolean(scr.login));
+}
+
+function scrRenderJobs(jobs, message) {
+    const empty = document.getElementById('scrEmpty');
+    empty.textContent = message || 'No jobs yet. Create one, upload your CV, and it runs on its schedule.';
+    empty.classList.toggle('hidden', jobs.length > 0);
+    document.getElementById('scrJobs').innerHTML = jobs.map(scrJobHtml).join('');
+}
+
+function scrWhen(iso) {
+    return iso ? new Date(iso).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : '—';
+}
+
+function scrJobHtml(job) {
+    const [label, tone] = SCR_STATUS[job.status] || [job.status, 'idle'];
+    const c = job.config;
+    const run = job.last_run;
+    const last = run
+        ? `Last run ${scrWhen(run.started_at)} · ${run.collected} new${run.error ? ` · ${aiEscape(run.error)}` : ''}`
+        : 'Not run yet';
+    const searches = c.jobs.keywords.length + c.posts.keywords.length;
+    const active = job.state === 'active' && job.status !== 'expired';
+    const until = c.expires_on ? ` · until ${aiEscape(new Date(c.expires_on + 'T00:00').toLocaleDateString())}` : '';
+    const waiting = job.pending_items ? ` · ${job.pending_items} waiting for the model` : '';
+    return `
+        <div class="scr-job" data-id="${aiEscape(job.id)}">
+            <div class="scr-job-head">
+                <span class="scr-job-name">${aiEscape(c.name)}</span>
+                <span class="scr-badge ${tone}">${aiEscape(label)}</span>
+            </div>
+            ${job.halt_reason ? `<p class="scr-job-alert">${aiEscape(job.halt_reason)}</p>` : ''}
+            <div class="scr-job-meta">
+                <span>${searches} search${searches === 1 ? '' : 'es'} · ${aiEscape(c.jobs.locations.join(', '))}</span>
+                <span>${aiEscape(c.schedule.days.join(' '))} at ${aiEscape(c.schedule.times.join(', '))} (${aiEscape(c.schedule.timezone)})${until}</span>
+                <span>${active ? `Next run ${scrWhen(job.next_run_at)}${job.run_requested ? ' · run queued' : ''}` : 'Not scheduled'}</span>
+                <span>${last}${waiting}</span>
+            </div>
+            <div class="scr-job-actions">
+                <button type="button" class="scr-btn" data-action="run" ${active && !job.run_requested ? '' : 'disabled'}>Run now</button>
+                <button type="button" class="scr-btn" data-action="${job.state === 'active' ? 'pause' : 'resume'}">${job.state === 'active' ? 'Pause' : 'Resume'}</button>
+                <button type="button" class="scr-btn" data-action="matches">Matches</button>
+                <button type="button" class="scr-btn" data-action="cv">${job.has_cv ? 'Replace CV' : 'Upload CV'}</button>
+                <button type="button" class="scr-btn" data-action="edit">Edit</button>
+                <button type="button" class="scr-btn danger" data-action="delete">Delete</button>
+            </div>
+        </div>`;
+}
+
+async function scrOnJobClick(e) {
+    const button = e.target.closest('button[data-action]');
+    if (!button) return;
+    const job = scr.jobs.find(j => j.id === button.closest('.scr-job').dataset.id);
+    if (!job) return;
+    const action = button.dataset.action;
+    if (action === 'edit') return scrOpenForm(job);
+    if (action === 'matches') return scrShowMatches(job);
+    if (action === 'cv') {
+        scr.cvTarget = job;
+        document.getElementById('scrCvReplace').click();
+        return;
+    }
+    if (action === 'delete' && !confirm(`Delete "${job.config.name}" with its CV and results?`)) return;
+    const requests = {
+        run: () => scrFetch(`/jobs/${job.id}/run`, { method: 'POST' }),
+        pause: () => scrFetch(`/jobs/${job.id}/pause`, { method: 'POST' }),
+        resume: () => scrFetch(`/jobs/${job.id}/resume`, { method: 'POST' }),
+        delete: () => scrFetch(`/jobs/${job.id}`, { method: 'DELETE' })
+    };
+    const done = { run: 'Collection queued', pause: 'Job paused', resume: 'Job resumed', delete: 'Job deleted' };
+    await scrRun(requests[action], done[action]);
+}
+
+async function scrRun(request, message) {
+    scr.busy = true;
+    try {
+        await request();
+        showToast(message);
+        await scrLoad();
+    } catch (error) {
+        showToast(error.message, 'error');
+    } finally {
+        scr.busy = false;
+    }
+}
+
+function scrUploadCv(jobId, file) {
+    const body = new FormData();
+    body.append('file', file);
+    return scrFetch(`/jobs/${jobId}/cv`, { method: 'PUT', body });
+}
+
+async function scrOnCvReplace(e) {
+    const file = e.target.files[0];
+    const job = scr.cvTarget;
+    e.target.value = '';
+    if (!file || !job) return;
+    await scrRun(() => scrUploadCv(job.id, file), 'CV uploaded');
+}
+
+function scrOpenForm(job) {
+    scr.editing = job;
+    const c = job ? job.config : null;
+    const set = (id, value) => { document.getElementById(id).value = value; };
+    const lines = values => values.join('\n');
+    document.getElementById('scrFormTitle').textContent = job ? `Edit "${c.name}"` : 'New job';
+    document.getElementById('scrSave').textContent = job ? 'Save changes' : 'Create job';
+    set('scrName', c ? c.name : '');
+    set('scrJobKeywords', c ? lines(c.jobs.keywords) : '');
+    set('scrLocations', c ? lines(c.jobs.locations) : '');
+    set('scrPostKeywords', c ? lines(c.posts.keywords) : '');
+    set('scrCriteria', c ? c.analysis.criteria : '');
+    set('scrMaxPages', c ? c.jobs.max_pages : 2);
+    set('scrMaxScrolls', c ? c.posts.max_scrolls : 10);
+    set('scrMinScore', c ? c.analysis.min_score : 70);
+    set('scrMaxItems', c ? c.analysis.max_items : 30);
+    set('scrEffort', c ? c.analysis.effort : 'low');
+    set('scrTimes', c ? c.schedule.times.join(', ') : '07:00, 13:00, 19:00');
+    set('scrTimezone', c ? c.schedule.timezone : Intl.DateTimeFormat().resolvedOptions().timeZone);
+    set('scrNotify', c ? c.notify_to : '');
+    set('scrExpires', c && c.expires_on ? c.expires_on : '');
+    const days = c ? c.schedule.days : SCR_DAYS.slice(0, 5);
+    document.querySelectorAll('#scrDays input').forEach(box => { box.checked = days.includes(box.value); });
+    set('scrCv', '');
+    document.getElementById('scrCvGroup').classList.toggle('hidden', Boolean(job));
+    const form = document.getElementById('scrForm');
+    form.classList.remove('hidden');
+    form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.getElementById('scrName').focus({ preventScroll: true });
+}
+
+function scrCloseForm() {
+    scr.editing = null;
+    document.getElementById('scrForm').classList.add('hidden');
+}
+
+function scrFormConfig() {
+    const value = id => document.getElementById(id).value.trim();
+    const lines = id => document.getElementById(id).value.split('\n').map(s => s.trim()).filter(Boolean);
+    const number = id => Number(document.getElementById(id).value);
+    return {
+        name: value('scrName'),
+        jobs: { keywords: lines('scrJobKeywords'), locations: lines('scrLocations'), max_pages: number('scrMaxPages') },
+        posts: { keywords: lines('scrPostKeywords'), max_scrolls: number('scrMaxScrolls') },
+        analysis: {
+            criteria: value('scrCriteria'),
+            min_score: number('scrMinScore'),
+            max_items: number('scrMaxItems'),
+            effort: value('scrEffort')
+        },
+        schedule: {
+            timezone: value('scrTimezone'),
+            days: [...document.querySelectorAll('#scrDays input:checked')].map(box => box.value),
+            times: value('scrTimes').split(',').map(s => s.trim()).filter(Boolean)
+        },
+        notify_to: value('scrNotify'),
+        expires_on: value('scrExpires') || null
+    };
+}
+
+async function scrSave(e) {
+    e.preventDefault();
+    const editing = scr.editing;
+    const cv = document.getElementById('scrCv').files[0];
+    const save = document.getElementById('scrSave');
+    save.disabled = true;
+    scr.busy = true;
+    try {
+        const job = await scrFetch(editing ? `/jobs/${editing.id}` : '/jobs', {
+            method: editing ? 'PATCH' : 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(scrFormConfig())
+        });
+        scrCloseForm();
+        if (cv) {
+            try {
+                await scrUploadCv(job.id, cv);
+            } catch (error) {
+                // The job exists anyway: say so instead of looking like nothing was saved.
+                showToast(`Job saved, but not the CV: ${error.message}`, 'error');
+                await scrLoad();
+                return;
+            }
+        }
+        showToast(editing ? 'Job updated' : 'Job created');
+        await scrLoad();
+    } catch (error) {
+        showToast(error.message, 'error');
+    } finally {
+        save.disabled = false;
+        scr.busy = false;
+    }
+}
+
+async function scrShowMatches(job) {
+    if (!job) return;
+    scr.matchesJob = job;
+    const box = document.getElementById('scrMatches');
+    const body = document.getElementById('scrMatchesBody');
+    document.getElementById('scrMatchesTitle').textContent = `Matches · ${job.config.name}`;
+    box.classList.remove('hidden');
+    body.innerHTML = '<p class="scr-empty">Loading…</p>';
+    box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const minScore = document.getElementById('scrOnlyRelevant').checked ? job.config.analysis.min_score : 0;
+    try {
+        const matches = await scrFetch(`/jobs/${job.id}/matches?min_score=${minScore}&limit=200`);
+        body.innerHTML = matches.length ? scrMatchesTable(matches) : '<p class="scr-empty">Nothing here yet.</p>';
+    } catch (error) {
+        body.innerHTML = `<p class="scr-empty">${aiEscape(error.message)}</p>`;
+    }
+}
+
+function scrMatchesTable(matches) {
+    const rows = matches.map(m => {
+        const title = m.title || `Post by ${m.author || '?'}`;
+        // Only LinkedIn links become anchors: the URL comes from scraped pages.
+        const link = /^https:\/\/www\.linkedin\.com\//.test(m.url)
+            ? `<a href="${aiEscape(m.url)}" target="_blank" rel="noopener noreferrer">${aiEscape(title)}</a>`
+            : aiEscape(title);
+        const where = [m.company, m.location].filter(Boolean).map(aiEscape).join(' · ');
+        return `<tr>
+            <td class="scr-score${m.relevant ? ' ok' : ''}">${Number(m.score)}</td>
+            <td>${link}${where ? `<div class="scr-where">${where}</div>` : ''}<div class="scr-reason">${aiEscape(m.reason || '')}</div></td>
+            <td class="scr-date">${scrWhen(m.analyzed_at)}${m.notified_at ? '<br>emailed' : ''}</td>
+        </tr>`;
+    }).join('');
+    return `<div class="scr-table"><table><thead><tr><th>Score</th><th>Item</th><th>Analyzed</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+async function scrDisconnect() {
+    if (!confirm('Disconnect LinkedIn? Your jobs wait until you log in again.')) return;
+    await scrRun(() => scrFetch('/session', { method: 'DELETE' }), 'LinkedIn disconnected');
+}
+
+async function scrConnect() {
+    // Opened in the click itself: a tab opened after an await is taken for a popup and blocked.
+    const tab = window.open('about:blank', '_blank');
+    try {
+        const login = await scrFetch('/session/login', { method: 'POST' });
+        if (tab) tab.location = login.url;
+        scr.login = login;
+        scrLoginProgress(tab ? null : login.url);
+        scrPollLogin();
+    } catch (error) {
+        if (tab) tab.close();
+        showToast(error.message, 'error');
+    }
+}
+
+function scrLoginProgress(url) {
+    const box = document.getElementById('scrLoginProgress');
+    box.innerHTML = url
+        ? `The browser blocked the new tab. <a href="${aiEscape(url)}" target="_blank" rel="noopener">Open the LinkedIn login</a>.`
+        : 'Waiting for you to log in to LinkedIn in the other tab… <button type="button" class="scr-link" id="scrCancelLogin">Cancel</button>';
+    box.classList.remove('hidden');
+    document.getElementById('scrLoginNote').classList.add('hidden');
+    document.getElementById('scrConnect').classList.add('hidden');
+    const cancel = document.getElementById('scrCancelLogin');
+    if (cancel) cancel.addEventListener('click', scrCancelLogin);
+}
+
+async function scrPollLogin() {
+    while (scr.login) {
+        await sleep(SCR_LOGIN_POLL_MS);
+        if (!scr.login) return;
+        let state;
+        try {
+            state = await scrFetch(`/session/login/${scr.login.id}`);
+        } catch (error) {
+            continue;  // a blip in the connection is not the end of the login
+        }
+        if (state.status === 'starting' || state.status === 'waiting') continue;
+        const [message, type] = SCR_LOGIN_DONE[state.status] || ['LinkedIn login finished.', 'success'];
+        scr.login = null;
+        document.getElementById('scrLoginProgress').classList.add('hidden');
+        showToast(message, type);
+        await scrLoad();
+    }
+}
+
+async function scrCancelLogin() {
+    if (!scr.login) return;
+    try {
+        await scrFetch(`/session/login/${scr.login.id}`, { method: 'DELETE' });
+    } catch (error) {
+        showToast(error.message, 'error');
+    }
 }

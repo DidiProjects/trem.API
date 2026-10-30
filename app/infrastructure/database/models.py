@@ -4,9 +4,11 @@ from datetime import datetime, timezone
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    Column,
     ForeignKey,
     Index,
     String,
+    Table,
     Text,
     Uuid,
     func,
@@ -42,6 +44,23 @@ class Base(DeclarativeBase):
     pass
 
 
+# Perfis são um conjunto por usuário e por chave: um perfil por área (arquivos,
+# IA, scraper), e a mesma conta pode precisar de várias.
+user_profiles = Table(
+    "user_profiles",
+    Base.metadata,
+    Column("user_id", Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
+    Column("profile_id", Uuid(as_uuid=True), ForeignKey("profiles.id", ondelete="CASCADE"), primary_key=True),
+)
+
+api_client_profiles = Table(
+    "api_client_profiles",
+    Base.metadata,
+    Column("client_id", Uuid(as_uuid=True), ForeignKey("api_clients.id", ondelete="CASCADE"), primary_key=True),
+    Column("profile_id", Uuid(as_uuid=True), ForeignKey("profiles.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
 class ProfileModel(Base):
     __tablename__ = "profiles"
     __table_args__ = (
@@ -57,7 +76,9 @@ class ProfileModel(Base):
         TIMESTAMP(timezone=True), nullable=False, default=_now, server_default=func.now()
     )
 
-    users: Mapped[list["UserModel"]] = relationship("UserModel", back_populates="profile")
+    users: Mapped[list["UserModel"]] = relationship(
+        "UserModel", secondary=user_profiles, back_populates="profiles"
+    )
 
     def __repr__(self) -> str:
         return f"ProfileModel(id={self.id!r}, name={self.name!r})"
@@ -77,9 +98,6 @@ class UserModel(Base):
     )
     email: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
-    profile_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("profiles.id"), nullable=False
-    )
     status: Mapped[str] = mapped_column(
         String(20),
         nullable=False,
@@ -107,7 +125,9 @@ class UserModel(Base):
         TIMESTAMP(timezone=True), nullable=True
     )
 
-    profile: Mapped["ProfileModel"] = relationship("ProfileModel", back_populates="users")
+    profiles: Mapped[list["ProfileModel"]] = relationship(
+        "ProfileModel", secondary=user_profiles, back_populates="users", lazy="selectin"
+    )
     refresh_tokens: Mapped[list["RefreshTokenModel"]] = relationship(
         "RefreshTokenModel", back_populates="user", cascade="all, delete-orphan"
     )
@@ -141,8 +161,11 @@ class ApiClientModel(Base):
     key_hash: Mapped[str] = mapped_column(
         String(64), unique=True, nullable=False, index=True
     )
-    profile_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("profiles.id"), nullable=False
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
     )
     revoked: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false", index=True
@@ -154,7 +177,9 @@ class ApiClientModel(Base):
         TIMESTAMP(timezone=True), nullable=False, default=_now, server_default=func.now()
     )
 
-    profile: Mapped["ProfileModel"] = relationship("ProfileModel")
+    profiles: Mapped[list["ProfileModel"]] = relationship(
+        "ProfileModel", secondary=api_client_profiles, lazy="selectin"
+    )
 
     def __repr__(self) -> str:  # sem key_hash — é material sensível
         return (

@@ -29,8 +29,9 @@ async def create_client(
     try:
         client, raw_key = await service.create_client(
             name=body.name,
-            profile_name=body.profile_name.value,
+            profile_names=[p.value for p in body.profile_names],
             description=body.description,
+            user_id=body.user_id,
         )
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)

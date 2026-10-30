@@ -81,8 +81,9 @@ class TestUserEntity:
         assert user.can_authenticate is False
 
     def test_has_profile(self):
-        user = make_mock_user(profile_name=ProfileName.FILE_EDITOR.value)
+        user = make_mock_user((ProfileName.FILE_EDITOR.value, ProfileName.AI.value))
         assert user.has_profile("file_editor") is True
+        assert user.has_profile("ai") is True
         assert user.has_profile("airline_company") is False
 
     def test_repr_hides_password_hash(self):
@@ -196,46 +197,59 @@ class TestTokenResponses:
 class TestUserCreate:
     def test_valid_payload(self):
         body = UserCreate(
-            username="joao.silva", email="joao@example.com", profile_name="file_editor"
+            username="joao.silva", email="joao@example.com", profile_names=["file_editor"]
         )
         assert body.username == "joao.silva"
 
     def test_email_is_optional(self):
-        assert UserCreate(username="joao", profile_name="file_editor").email is None
+        assert UserCreate(username="joao", profile_names=["file_editor"]).email is None
 
     def test_email_is_lowercased(self):
         body = UserCreate(
-            username="joao", email="Joao@Example.COM", profile_name="file_editor"
+            username="joao", email="Joao@Example.COM", profile_names=["file_editor"]
         )
         assert body.email == "joao@example.com"
 
     @pytest.mark.parametrize("email", ["nao-e-email", "sem@dominio", "@example.com", "a b@c.com"])
     def test_rejects_invalid_email(self, email):
         with pytest.raises(ValidationError):
-            UserCreate(username="joao", email=email, profile_name="file_editor")
+            UserCreate(username="joao", email=email, profile_names=["file_editor"])
 
     @pytest.mark.parametrize("username", ["ab", "x" * 51])
     def test_rejects_username_out_of_length_bounds(self, username):
         with pytest.raises(ValidationError):
-            UserCreate(username=username, profile_name="file_editor")
+            UserCreate(username=username, profile_names=["file_editor"])
 
     @pytest.mark.parametrize("username", ["joao silva", "joão", "joao@silva", "joao/silva"])
     def test_rejects_username_with_forbidden_characters(self, username):
         with pytest.raises(ValidationError):
-            UserCreate(username=username, profile_name="file_editor")
+            UserCreate(username=username, profile_names=["file_editor"])
 
     @pytest.mark.parametrize("username", ["abc", "joao_silva", "joao.silva", "joao-silva", "user123"])
     def test_accepts_valid_username_shapes(self, username):
-        assert UserCreate(username=username, profile_name="file_editor").username == username
+        assert UserCreate(username=username, profile_names=["file_editor"]).username == username
 
-    @pytest.mark.parametrize("profile", ["file_editor", "airline_company"])
+    @pytest.mark.parametrize("profile", [p.value for p in ProfileName])
     def test_accepts_known_profiles(self, profile):
-        assert UserCreate(username="joao", profile_name=profile).profile_name == profile
+        assert UserCreate(username="joao", profile_names=[profile]).profile_names == [profile]
 
     @pytest.mark.parametrize("profile", ["admin", "superuser", "", "FILE_EDITOR"])
     def test_rejects_unknown_profile(self, profile):
         with pytest.raises(ValidationError):
-            UserCreate(username="joao", profile_name=profile)
+            UserCreate(username="joao", profile_names=["ai", profile])
+
+    def test_requires_at_least_one_profile(self):
+        with pytest.raises(ValidationError):
+            UserCreate(username="joao", profile_names=[])
+
+    def test_repeated_profiles_are_collapsed_and_sorted(self):
+        body = UserCreate(username="joao", profile_names=["file_editor", "ai", "file_editor"])
+        assert body.profile_names == ["ai", "file_editor"]
+
+    def test_single_profile_string_is_not_accepted(self):
+        """The old single-profile payload must fail loudly instead of being half-read."""
+        with pytest.raises(ValidationError):
+            UserCreate(username="joao", profile_name="file_editor")
 
 
 class TestUserResponse:
