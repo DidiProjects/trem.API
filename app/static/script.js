@@ -1561,7 +1561,7 @@ async function scrConnect() {
     try {
         const login = await scrFetch('/session/login', { method: 'POST' });
         if (tab) tab.location = login.url;
-        scr.login = login;
+        scr.login = { ...login, tab };
         scrLoginProgress(tab ? null : login.url);
         scrPollLogin();
     } catch (error) {
@@ -1594,6 +1594,8 @@ async function scrPollLogin() {
         }
         if (state.status === 'starting' || state.status === 'waiting') continue;
         const [message, type] = SCR_LOGIN_DONE[state.status] || ['LinkedIn login finished.', 'success'];
+        // The viewer would only show noVNC failing to reconnect to a login that no longer exists.
+        if (scr.login.tab) scr.login.tab.close();
         scr.login = null;
         document.getElementById('scrLoginProgress').classList.add('hidden');
         showToast(message, type);
