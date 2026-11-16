@@ -16,7 +16,7 @@ class IApiClientRepository(ABC):
         ...
 
     @abstractmethod
-    async def get_by_name(self, name: str) -> Optional[ApiClient]:
+    async def get_active_by_name(self, name: str, user_id: Optional[str]) -> Optional[ApiClient]:
         ...
 
     @abstractmethod

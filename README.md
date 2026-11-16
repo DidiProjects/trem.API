@@ -180,6 +180,20 @@ POST /auth/mfa/disable          {"password", "code"}
 With TOTP on, `/auth/login` answers `{"mfa_required": true, "mfa_token"}` and the tokens
 come from `/auth/mfa/verify`.
 
+### Me
+
+A logged-in user (JWT, not an API key) manages their own keys: at most 5 active, each shown
+in full only in the creation response.
+
+```
+GET    /me
+GET    /me/api-keys                    → [{id, name, permissions, key_hint, revoked, last_used_at}]
+POST   /me/api-keys  {"name", "permissions"?}  → {..., "api_key": "trem_..."}
+DELETE /me/api-keys/{id}
+```
+
+A key can hold only the owner's `trem:*` permissions, never `trem:admin`.
+
 ### Admin
 
 Requires a login holding `trem:admin` and proven with TOTP (`amr` contains `otp`). The

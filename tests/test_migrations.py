@@ -578,3 +578,42 @@ class TestUpgrade008:
         command.upgrade(alembic_cfg, "008")
         command.downgrade(alembic_cfg, "007")
         command.upgrade(alembic_cfg, "008")
+
+
+class TestUpgrade009:
+    def _user(self, name):
+        uid = uuid.uuid4()
+        sql("INSERT INTO users (id, username, password_hash) VALUES (:id, :n, 'x')", id=uid, n=name)
+        return uid
+
+    def _key(self, name, owner=None, revoked=False):
+        sql(
+            "INSERT INTO api_clients (name, key_hash, user_id, revoked) VALUES (:n, :h, :u, :r)",
+            n=name, h=uuid.uuid4().hex * 2, u=owner, r=revoked,
+        )
+
+    def test_names_are_unique_per_owner_among_active_keys(self, alembic_cfg):
+        command.upgrade(alembic_cfg, "009")
+        ana, bia = self._user("ana"), self._user("bia")
+        self._key("notebook", ana)
+        self._key("notebook", bia)
+        self._key("notebook", ana, revoked=True)
+        with pytest.raises(IntegrityError):
+            self._key("notebook", ana)
+
+    def test_service_names_stay_unique_among_active_keys(self, alembic_cfg):
+        command.upgrade(alembic_cfg, "009")
+        self._key("flight-api")
+        self._key("flight-api", revoked=True)
+        with pytest.raises(IntegrityError):
+            self._key("flight-api")
+
+    def test_downgrade_renames_duplicates(self, alembic_cfg):
+        command.upgrade(alembic_cfg, "009")
+        ana, bia = self._user("ana"), self._user("bia")
+        self._key("notebook", ana)
+        self._key("notebook", bia)
+        command.downgrade(alembic_cfg, "008")
+        names = sorted(r[0] for r in sql("SELECT name FROM api_clients"))
+        assert len(set(names)) == 2 and all(n.startswith("notebook-") for n in names)
+        command.upgrade(alembic_cfg, "009")

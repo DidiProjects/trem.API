@@ -282,6 +282,24 @@ python -m scripts.manage_api_clients list
 python -m scripts.manage_api_clients revoke <client_id>
 ```
 
+### Chaves do próprio usuário (`/me/api-keys`)
+
+Quem está logado (JWT; uma chave não cria chaves) gerencia as próprias:
+
+| Método | Path | Descrição |
+|--------|------|-----------|
+| GET    | `/me` | Perfil, permissões, TOTP, quantas chaves ativas |
+| GET    | `/me/api-keys` | Lista, sem a chave: só `key_hint` (`trem_xxxx`) |
+| POST   | `/me/api-keys` | `{name, permissions?}` → a chave completa, só nesta resposta |
+| DELETE | `/me/api-keys/{id}` | Revoga |
+
+- No máximo **5 chaves ativas** por usuário; revogar libera a vaga e o nome.
+- Permissões: subconjunto das `trem:*` do dono, nunca `trem:admin` (admin exige pessoa
+  com segundo fator). Sem `permissions`, a chave leva todas as `trem:*` do dono.
+- O nome é único entre as chaves ativas do mesmo dono (migration 009); dois usuários
+  podem ter uma chave "notebook".
+- Chave de outro usuário responde 404, igual a uma que não existe.
+
 ### Precedência
 
 Quando as duas credenciais chegam juntas, a **API key vence** e o Bearer é

@@ -14,6 +14,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import INET
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -210,13 +211,26 @@ class ApiClientModel(Base):
     """
 
     __tablename__ = "api_clients"
+    __table_args__ = (
+        # A name is unique among the active keys of one owner, and among active service keys.
+        Index(
+            "uq_api_clients_owner_name", "user_id", "name", unique=True,
+            postgresql_where=text("user_id IS NOT NULL AND NOT revoked"),
+            sqlite_where=text("user_id IS NOT NULL AND NOT revoked"),
+        ),
+        Index(
+            "uq_api_clients_service_name", "name", unique=True,
+            postgresql_where=text("user_id IS NULL AND NOT revoked"),
+            sqlite_where=text("user_id IS NULL AND NOT revoked"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    name: Mapped[str] = mapped_column(
-        String(100), unique=True, nullable=False, index=True
-    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    # First characters of the key ("trem_xxxx"): enough to recognise it in a list.
+    key_hint: Mapped[str | None] = mapped_column(String(12), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     key_hash: Mapped[str] = mapped_column(
         String(64), unique=True, nullable=False, index=True
