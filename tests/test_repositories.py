@@ -255,9 +255,10 @@ class TestRefreshTokens:
             "user_id": str(user.id),
             "token_hash": token_hash,
             "expires_at": datetime.now(timezone.utc) + timedelta(days=7),
+            "application_id": user.permissions[0].application_id,
         }
         params.update(kwargs)
-        await repo.create_refresh_token(**params)
+        return await repo.create_refresh_token(**params)
 
     async def test_create_and_fetch(self, repo, persisted_user):
         await self._create(repo, persisted_user)
@@ -276,14 +277,29 @@ class TestRefreshTokens:
     async def test_unknown_hash_returns_none(self, repo, persisted_user):
         assert await repo.get_refresh_token("nao-existe") is None
 
-    async def test_revoke_single_token(self, repo, persisted_user):
-        await self._create(repo, persisted_user, "hash-a")
-        await self._create(repo, persisted_user, "hash-b")
+    async def test_first_token_starts_its_own_family(self, repo, persisted_user):
+        token = await self._create(repo, persisted_user)
+        assert token.family_id == token.id
+        assert (await repo.get_refresh_token("hash-1")).application.slug == "trem"
 
-        await repo.revoke_refresh_token("hash-a")
+    async def test_claim_succeeds_once(self, repo, persisted_user):
+        token = await self._create(repo, persisted_user)
+        assert await repo.claim_refresh_token(token.id) is True
+        assert await repo.claim_refresh_token(token.id) is False
+        assert (await repo.get_refresh_token("hash-1")).revoked is True
 
-        assert (await repo.get_refresh_token("hash-a")).revoked is True
-        assert (await repo.get_refresh_token("hash-b")).revoked is False
+    async def test_successor_and_family_revocation(self, repo, persisted_user):
+        first = await self._create(repo, persisted_user, "hash-a")
+        second = await self._create(repo, persisted_user, "hash-b", family_id=first.family_id)
+        other = await self._create(repo, persisted_user, "hash-c")
+
+        await repo.set_refresh_token_successor(first.id, second.id)
+        await repo.revoke_refresh_token_family(first.family_id)
+
+        assert (await repo.get_refresh_token("hash-a")).replaced_by == second.id
+        assert (await repo.get_refresh_token("hash-b")).revoked is True
+        assert (await repo.get_refresh_token("hash-c")).revoked is False
+        assert other.family_id != first.family_id
 
     async def test_revoke_all_for_user(self, repo, persisted_user):
         for h in ("hash-a", "hash-b", "hash-c"):
@@ -303,6 +319,7 @@ class TestRefreshTokens:
             user_id=other.id,
             token_hash="hash-do-outro",
             expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+            application_id=persisted_user.permissions[0].application_id,
         )
 
         await repo.revoke_all_refresh_tokens(str(persisted_user.id))
@@ -310,7 +327,7 @@ class TestRefreshTokens:
         assert (await repo.get_refresh_token("hash-do-persisted")).revoked is True
         assert (await repo.get_refresh_token("hash-do-outro")).revoked is False
 
-    async def test_revoking_unknown_hash_is_a_noop(self, repo, persisted_user):
+    async def test_revoking_unknown_family_is_a_noop(self, repo, persisted_user):
         await self._create(repo, persisted_user, "hash-a")
-        await repo.revoke_refresh_token("nao-existe")
+        await repo.revoke_refresh_token_family(uuid.uuid4())
         assert (await repo.get_refresh_token("hash-a")).revoked is False

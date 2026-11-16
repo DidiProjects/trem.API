@@ -1,4 +1,8 @@
+from typing import Literal, Optional
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.domain.entities.permission import APPLICATION_SLUG_PATTERN, TREM_APP
 
 # Regras de senha aplicadas na troca de senha (login não valida força — só compara)
 PASSWORD_MIN_LENGTH = 8
@@ -10,24 +14,31 @@ class LoginRequest(BaseModel):
 
     username: str = Field(min_length=1, max_length=100)
     password: str = Field(min_length=1, max_length=PASSWORD_MAX_LENGTH)
+    audience: str = Field(
+        default=TREM_APP,
+        pattern=APPLICATION_SLUG_PATTERN,
+        description="Aplicação para a qual o token é emitido",
+    )
+    session: Literal["body", "cookie"] = Field(
+        default="body",
+        description="cookie: o refresh token vai num cookie HttpOnly, fora do alcance do JavaScript",
+    )
 
 
 class TokenResponse(BaseModel):
     access_token: str
-    refresh_token: str
+    refresh_token: Optional[str] = None
     token_type: str = "bearer"
+    expires_in: int
     must_change_password: bool
 
 
 class RefreshRequest(BaseModel):
+    """Sem corpo, o refresh token vem do cookie da sessão do navegador."""
+
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    refresh_token: str = Field(min_length=1)
-
-
-class AccessTokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
+    refresh_token: Optional[str] = Field(default=None, min_length=1)
 
 
 class ChangePasswordRequest(BaseModel):

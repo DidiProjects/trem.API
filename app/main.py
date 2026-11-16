@@ -101,6 +101,7 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 # --- Routers v1: autenticação e gestão de usuários ---
 app.include_router(auth_router.router)
+app.include_router(auth_router.well_known_router)
 app.include_router(users_router.router)
 app.include_router(api_clients_router.router)
 

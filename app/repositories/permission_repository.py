@@ -1,4 +1,4 @@
-from typing import Iterable
+from typing import Iterable, Optional
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +28,12 @@ class PermissionRepository(BaseRepository):
             )))
         )
         return list(result.scalars().all())
+
+    async def get_application(self, slug: str) -> Optional[ApplicationModel]:
+        result = await self._session.execute(
+            select(ApplicationModel).where(ApplicationModel.slug == slug)
+        )
+        return result.scalar_one_or_none()
 
     async def get_by_ids(self, permission_ids: Iterable[str]) -> list[PermissionModel]:
         ids = [i for i in (_as_uuid(p) for p in permission_ids) if i]

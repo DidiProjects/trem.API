@@ -16,7 +16,7 @@ from app.api.v1.dependencies import (
     require_permission,
 )
 from app.domain.entities.api_client import Principal
-from app.core.security import create_access_token, create_refresh_token
+from app.core.security import create_access_token, generate_refresh_token
 from app.domain.entities.permission import TremPermission
 from app.domain.entities.user import User, UserStatus
 from app.infrastructure.database.connection import get_db
@@ -105,8 +105,14 @@ class TestGetCurrentUser:
 
     def test_refresh_token_is_rejected(self, probe):
         """Um refresh token não pode servir de credencial de acesso."""
-        raw, _ = create_refresh_token(USER_ID)
+        raw = generate_refresh_token()
         response = probe.get("/me", headers={"Authorization": f"Bearer {raw}"})
+        assert response.status_code == 401
+
+    def test_token_for_another_application_is_rejected(self, probe):
+        """Um token emitido para outra interface não abre esta API."""
+        token = create_access_token(USER_ID, "testuser", ["financas:read"], False, audience="financas")
+        response = probe.get("/me", headers={"Authorization": f"Bearer {token}"})
         assert response.status_code == 401
 
     def test_deleted_user_returns_401(self, probe, repo):

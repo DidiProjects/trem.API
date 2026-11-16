@@ -23,6 +23,20 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "RS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    # `iss` of every token; defaults to API_URL. Other applications check it with the JWKS.
+    JWT_ISSUER: str = ""
+    # Retired public keys still accepted while their tokens expire, separated by "|||".
+    JWT_EXTRA_PUBLIC_KEYS: str = ""
+
+    # Login throttling, in memory (the API already runs as a single process). Counted per
+    # username, existing or not, so a lockout does not reveal which accounts exist.
+    LOGIN_MAX_FAILURES_PER_USERNAME: int = 5
+    LOGIN_MAX_FAILURES_PER_IP: int = 20
+    LOGIN_FAILURE_WINDOW_SECONDS: int = 900
+
+    # Browser session: the refresh token lives in an HttpOnly cookie scoped to /auth.
+    REFRESH_COOKIE_NAME: str = "trem_refresh"
+    COOKIE_SECURE: bool = True
 
     # PostgreSQL (asyncpg)
     DATABASE_URL: str = "postgresql+asyncpg://trem:trem@localhost:5432/trem"
@@ -76,6 +90,12 @@ class Settings(BaseSettings):
 
     def jwt_public_key_pem(self) -> str:
         return self.JWT_PUBLIC_KEY.replace("\\n", "\n")
+
+    def jwt_extra_public_key_pems(self) -> list[str]:
+        return [k.replace("\\n", "\n") for k in self.JWT_EXTRA_PUBLIC_KEYS.split("|||") if k.strip()]
+
+    def jwt_issuer(self) -> str:
+        return self.JWT_ISSUER or self.API_URL
 
 
 @lru_cache()

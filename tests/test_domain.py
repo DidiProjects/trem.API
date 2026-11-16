@@ -24,7 +24,6 @@ from app.core.exceptions import (
 from app.domain.entities.permission import Permission, TremPermission, split_permission_key
 from app.domain.entities.user import UserStatus
 from app.domain.schemas.auth import (
-    AccessTokenResponse,
     ChangePasswordRequest,
     LoginRequest,
     RefreshRequest,
@@ -194,16 +193,26 @@ class TestRefreshRequest:
         with pytest.raises(ValidationError):
             RefreshRequest(refresh_token="   ")
 
+    def test_token_is_optional_for_the_cookie_session(self):
+        assert RefreshRequest().refresh_token is None
+
 
 class TestTokenResponses:
     def test_token_response_defaults_to_bearer(self):
-        body = TokenResponse(
-            access_token="a", refresh_token="r", must_change_password=False
-        )
+        body = TokenResponse(access_token="a", expires_in=900, must_change_password=False)
         assert body.token_type == "bearer"
+        assert body.refresh_token is None
 
-    def test_access_token_response_defaults_to_bearer(self):
-        assert AccessTokenResponse(access_token="a").token_type == "bearer"
+
+class TestLoginRequestAudience:
+    def test_defaults_to_trem_and_body_session(self):
+        body = LoginRequest(username="u", password="p")
+        assert (body.audience, body.session) == ("trem", "body")
+
+    @pytest.mark.parametrize("audience", ["", "Trem", "x", "a b", "trem:ai"])
+    def test_rejects_malformed_audience(self, audience):
+        with pytest.raises(ValidationError):
+            LoginRequest(username="u", password="p", audience=audience)
 
 
 # ---------------------------------------------------------------------------

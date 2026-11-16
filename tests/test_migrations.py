@@ -366,3 +366,66 @@ class TestAppOnMigratedSchema:
             "SELECT p.name FROM users t JOIN permissions p ON p.id = t.profile_id WHERE t.id = :id",
             id=uuid.UUID(existing.id),
         )[0][0] == "file_editor"
+
+    def test_login_refresh_and_reuse_on_postgres(self, alembic_cfg):
+        """The atomic claim is an UPDATE ... WHERE revoked = false: its rowcount matters on PG."""
+        from app.core.exceptions import InvalidCredentialsError
+        from app.core.security import hash_password
+        from app.services.auth_service import AuthService
+        from app.services.login_throttle import LoginThrottle
+
+        command.upgrade(alembic_cfg, "head")
+        sql(
+            "INSERT INTO users (id, username, password_hash, status, must_change_password) "
+            "VALUES (:id, 'ana', :h, 'active', false)",
+            id=uuid.uuid4(), h=hash_password("SenhaValida@123"),
+        )
+        throttle = LoginThrottle(per_username=10, per_ip=10, window_seconds=60)
+
+        async def login(session):
+            return (await AuthService(session, throttle=throttle).login("ana", "SenhaValida@123"))[1]
+
+        first = self.run(login)
+
+        async def refresh(session):
+            return (await AuthService(session, throttle=throttle).refresh(first))[1]
+
+        second = self.run(refresh)
+
+        async def reuse(session):
+            with pytest.raises(InvalidCredentialsError):
+                await AuthService(session, throttle=throttle).refresh(first)
+
+        self.run(reuse)
+        revoked = sql("SELECT revoked, replaced_by IS NOT NULL FROM refresh_tokens ORDER BY created_at")
+        assert revoked == [(True, True), (True, False)]
+        assert second
+
+
+class TestUpgrade006:
+    def test_existing_tokens_become_single_token_families_of_trem(self, alembic_cfg):
+        command.upgrade(alembic_cfg, "005")
+        uid, tid = uuid.uuid4(), uuid.uuid4()
+        sql("INSERT INTO users (id, username, password_hash) VALUES (:id, 'u', 'x')", id=uid)
+        sql(
+            "INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at) "
+            "VALUES (:id, :u, 'h', now() + interval '1 day')",
+            id=tid, u=uid,
+        )
+
+        command.upgrade(alembic_cfg, "006")
+
+        row = sql(
+            "SELECT t.family_id, a.slug, t.replaced_by FROM refresh_tokens t "
+            "JOIN applications a ON a.id = t.application_id"
+        )[0]
+        assert row == (tid, "trem", None)
+
+    def test_round_trip(self, alembic_cfg):
+        command.upgrade(alembic_cfg, "006")
+        command.downgrade(alembic_cfg, "005")
+        command.upgrade(alembic_cfg, "006")
+        columns = {r[0] for r in sql(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'refresh_tokens'"
+        )}
+        assert {"family_id", "replaced_by", "application_id"} <= columns

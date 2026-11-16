@@ -256,8 +256,21 @@ class RefreshTokenModel(Base):
     )
     ip_address: Mapped[str | None] = mapped_column(_Inet, nullable=True)
     user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Every token of one login shares the family: reuse of a rotated token revokes all of them.
+    family_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False, index=True)
+    replaced_by: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("refresh_tokens.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    application_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("applications.id", ondelete="CASCADE"),
+        nullable=False,
+    )
 
     user: Mapped["UserModel"] = relationship("UserModel", back_populates="refresh_tokens")
+    application: Mapped["ApplicationModel"] = relationship("ApplicationModel", lazy="joined")
 
     def __repr__(self) -> str:  # sem token_hash — é material sensível
         return (
