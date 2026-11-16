@@ -137,3 +137,19 @@ class ResendVerificationRequest(BaseModel):
     @classmethod
     def normalize_email(cls, v: str) -> str:
         return v.lower()
+
+
+class ForgotPasswordRequest(ResendVerificationRequest):
+    pass
+
+
+class ResetPasswordRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    token: str = Field(min_length=20, max_length=100)
+    new_password: str = Field(min_length=1, max_length=PASSWORD_MAX_LENGTH)
+
+    @field_validator("new_password")
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        return check_password(v)

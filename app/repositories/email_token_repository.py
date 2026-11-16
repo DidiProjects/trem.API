@@ -9,6 +9,7 @@ from app.repositories.base import BaseRepository
 from app.repositories.user_repository import _as_uuid
 
 VERIFY_EMAIL = "verify_email"
+RESET_PASSWORD = "reset_password"
 
 
 class EmailTokenRepository(BaseRepository):

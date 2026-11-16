@@ -82,6 +82,11 @@ class InvalidEmailTokenError(AppException):
         super().__init__("Link inválido ou expirado", status_code=400)
 
 
+class WeakPasswordError(AppException):
+    def __init__(self, message: str):
+        super().__init__(message, 422)
+
+
 class ApplicationAccessDeniedError(AppException):
     def __init__(self):
         super().__init__("Sem acesso a esta aplicação", status_code=403)

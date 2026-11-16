@@ -3,10 +3,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.routers.auth import http_error
 from app.core.exceptions import AppException
-from app.domain.schemas.auth import EmailTokenRequest, RegisterRequest, ResendVerificationRequest
+from app.domain.schemas.auth import (
+    EmailTokenRequest,
+    ForgotPasswordRequest,
+    RegisterRequest,
+    ResendVerificationRequest,
+    ResetPasswordRequest,
+)
 from app.domain.schemas.common import MessageResponse
 from app.infrastructure.database.connection import get_db
 from app.infrastructure.email.smtp_client import SmtpEmailClient
+from app.services.password_reset_service import PasswordResetService
 from app.services.signup_service import SignupService, deliver
 from app.utils.client_ip import client_ip
 
@@ -70,3 +77,36 @@ async def verify_email(
         raise http_error(e)
     background.add_task(deliver, service.outbox)
     return MessageResponse(message="E-mail confirmado. O cadastro aguarda aprovação do administrador.")
+
+
+@router.post("/forgot-password", response_model=MessageResponse, status_code=status.HTTP_202_ACCEPTED)
+async def forgot_password(
+    body: ForgotPasswordRequest,
+    request: Request,
+    background: BackgroundTasks,
+    db: AsyncSession = Depends(get_db, scope="function"),
+    email_client=Depends(get_email_client),
+):
+    service = PasswordResetService(db, email_client)
+    try:
+        await service.request(body.email, client_ip(request))
+    except AppException as e:
+        raise http_error(e)
+    background.add_task(deliver, service.outbox)
+    return MessageResponse(message="Se houver uma conta ativa com este e-mail, enviamos um link para redefinir a senha.")
+
+
+@router.post("/reset-password", response_model=MessageResponse)
+async def reset_password(
+    body: ResetPasswordRequest,
+    background: BackgroundTasks,
+    db: AsyncSession = Depends(get_db, scope="function"),
+    email_client=Depends(get_email_client),
+):
+    service = PasswordResetService(db, email_client)
+    try:
+        await service.reset(body.token, body.new_password)
+    except AppException as e:
+        raise http_error(e)
+    background.add_task(deliver, service.outbox)
+    return MessageResponse(message="Senha redefinida. Entre com a nova senha.")
