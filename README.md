@@ -163,7 +163,16 @@ POST /auth/refresh          {"refresh_token"}  or the session cookie + X-Request
 POST /auth/logout           {"refresh_token"}  or the session cookie + X-Requested-With: trem
 POST /auth/change-password  {"current_password", "new_password"}  (Bearer)
 GET  /.well-known/jwks.json
+
+POST /auth/register             {"username", "email", "password"}   → 202
+POST /auth/verify-email         {"token"}                            (from the e-mail link)
+POST /auth/resend-verification  {"email"}                            → 202
 ```
+
+Sign-up: the account waits for e-mail confirmation, then for an admin to approve it and
+grant permissions. `register` and `resend-verification` answer the same whether or not the
+e-mail or username exists. Passwords: 12 to 128 characters, no composition rules, must not
+contain the username or e-mail.
 
 Login and refresh answer `{"access_token", "refresh_token", "token_type", "expires_in",
 "must_change_password"}`; with the cookie session, `refresh_token` is left out of the body.

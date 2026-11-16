@@ -158,6 +158,15 @@ class UserModel(Base):
     last_login_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
+    email_verified_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
 
     permissions: Mapped[list["PermissionModel"]] = relationship(
         "PermissionModel",
@@ -168,6 +177,9 @@ class UserModel(Base):
     )
     refresh_tokens: Mapped[list["RefreshTokenModel"]] = relationship(
         "RefreshTokenModel", back_populates="user", cascade="all, delete-orphan"
+    )
+    email_tokens: Mapped[list["EmailTokenModel"]] = relationship(
+        "EmailTokenModel", cascade="all, delete-orphan", passive_deletes=True
     )
 
     def __repr__(self) -> str:  # sem password_hash — não vaza credencial em log
@@ -224,6 +236,32 @@ class ApiClientModel(Base):
             f"ApiClientModel(id={self.id!r}, name={self.name!r}, "
             f"revoked={self.revoked!r})"
         )
+
+
+class EmailTokenModel(Base):
+    """Single-use token sent by e-mail; only its SHA-256 is stored."""
+
+    __tablename__ = "email_tokens"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    purpose: Mapped[str] = mapped_column(String(30), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, default=_now, server_default=func.now()
+    )
+
+    def __repr__(self) -> str:  # sem token_hash
+        return f"EmailTokenModel(id={self.id!r}, purpose={self.purpose!r})"
 
 
 class RefreshTokenModel(Base):

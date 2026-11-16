@@ -260,3 +260,45 @@ class TestSmtpEmailClientFeedback:
         sent = smtp_server.send_message.call_args[0][0]
         body = sent.get_payload()[0].get_payload(decode=True).decode()
         assert "quem@example.com" in body
+
+
+def _body(smtp_server) -> str:
+    sent = smtp_server.send_message.call_args[0][0]
+    return sent.get_payload()[0].get_payload(decode=True).decode()
+
+
+class TestSmtpEmailClientSignup:
+    async def test_verification_carries_the_link(self, smtp_server, configured_settings):
+        await SmtpEmailClient().send_email_verification(
+            to="nova@example.com", username="nova", link="https://x/#verify-email=abc", ttl_hours=24
+        )
+        sent = smtp_server.send_message.call_args[0][0]
+        assert sent["To"] == "nova@example.com"
+        body = _body(smtp_server)
+        assert "https://x/#verify-email=abc" in body and "24 horas" in body
+
+    @pytest.mark.parametrize("reason,fragment", [("email", "Já existe uma conta"), ("username", "nome de usuário")])
+    async def test_conflict_explains_only_to_the_address_owner(
+        self, smtp_server, configured_settings, reason, fragment
+    ):
+        await SmtpEmailClient().send_signup_conflict(to="dono@example.com", reason=reason, login_url="https://x")
+        assert fragment in _body(smtp_server)
+
+    async def test_admin_notice_names_the_account(self, smtp_server, configured_settings):
+        await SmtpEmailClient().send_signup_pending_approval(
+            to="admin@example.com", username="nova", email="nova@example.com", user_id="u-1"
+        )
+        sent = smtp_server.send_message.call_args[0][0]
+        assert "nova" in sent["Subject"]
+        body = _body(smtp_server)
+        assert "nova@example.com" in body and "/admin/users/u-1/approve" in body
+
+    async def test_delivery_runs_off_the_event_loop(self, smtp_server, configured_settings):
+        """smtplib bloqueia: rodando numa thread, um SMTP lento não trava as outras requisições."""
+        import threading
+
+        loop_thread = threading.get_ident()
+        seen = []
+        smtp_server.send_message.side_effect = lambda msg: seen.append(threading.get_ident())
+        await SmtpEmailClient().send_signup_conflict(to="a@example.com", reason="email", login_url="x")
+        assert seen and seen[0] != loop_thread

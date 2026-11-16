@@ -196,9 +196,12 @@ pelo código, para o downgrade da 004 devolver o perfil exato de cada linha.
 
 | Status      | Significado                                      |
 |-------------|--------------------------------------------------|
-| `blocked`   | Padrão no cadastro. Admin deve habilitar         |
+| `pending_verification` | Cadastro próprio, e-mail ainda não confirmado |
+| `pending_approval` | E-mail confirmado, aguardando o administrador |
+| `blocked`   | Padrão na criação pelo admin. Admin deve habilitar |
 | `active`    | Acesso liberado                                  |
 | `suspended` | Suspensão manual pelo administrador              |
+| `rejected`  | Cadastro recusado pelo administrador             |
 
 ---
 
@@ -340,6 +343,37 @@ tempo que uma senha errada. O IP vem de `CF-Connecting-IP`, que o Cloudflare
 sobrescreve; o primeiro item do `X-Forwarded-For` é escolhido pelo cliente.
 
 ---
+
+## Cadastro pelo próprio usuário
+
+```
+1. POST /auth/register {username, email, password}
+   → conta pending_verification, sem permissões; resposta 202 sempre igual
+   → e-mail com link {API_URL}/#verify-email=<token> (256 bits, uso único, 24 h)
+
+2. POST /auth/verify-email {token}
+   → status pending_approval, email_verified_at preenchido
+   → e-mail para os admins (usuários ativos com trem:admin) e para ADMIN_EMAIL
+     (ou EMAIL_RECIPIENT), que cobre o tempo antes de existir o primeiro admin
+
+3. Admin aprova e define as permissões (API de admin)
+```
+
+- **Sem enumeração**: e-mail ou username já usados recebem a mesma resposta 202. Quem
+  fica sabendo é só o dono do e-mail digitado, por e-mail. A senha é hasheada antes de
+  qualquer consulta, e os e-mails saem numa background task depois da resposta, então
+  o tempo também não muda.
+- **Token no fragmento** (`#`): não vai para log do nginx nem para o `Referer`.
+- **Cadastro abandonado** (não confirmado em `EMAIL_TOKEN_TTL_HOURS`) não segura o
+  username nem o e-mail: um novo cadastro apaga a conta pendente.
+- **Reenvio**: `POST /auth/resend-verification {email}` invalida os links anteriores.
+- **Limites**: `SIGNUP_MAX_PER_IP` (5) cadastros por IP por `SIGNUP_WINDOW_SECONDS` (1 h);
+  o reenvio conta por IP e por e-mail. `SIGNUP_ENABLED=false` fecha o cadastro.
+- **Login** de conta pendente diz o motivo (e-mail não confirmado, aguardando
+  aprovação) só depois da senha certa.
+- **Senha**: mínimo 12, máximo 128, sem regra de composição (NIST SP 800-63B); não pode
+  conter o username nem o e-mail, nem ser quase toda o mesmo caractere. Vale também
+  para a troca de senha.
 
 ## Fluxo Completo de Cadastro e Primeiro Acesso
 

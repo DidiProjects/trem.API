@@ -28,6 +28,16 @@ class UserBlockedError(AppException):
         )
 
 
+class EmailNotVerifiedError(AppException):
+    def __init__(self):
+        super().__init__("Confirme seu e-mail pelo link enviado antes de entrar.", status_code=403)
+
+
+class AwaitingApprovalError(AppException):
+    def __init__(self):
+        super().__init__("Cadastro aguardando aprovação do administrador.", status_code=403)
+
+
 class PasswordChangeRequiredError(AppException):
     def __init__(self):
         super().__init__(
@@ -51,10 +61,25 @@ class UnknownPermissionsError(AppException):
         super().__init__(f"Permissões não encontradas: {', '.join(sorted(keys))}", status_code=400)
 
 
-class TooManyLoginAttemptsError(AppException):
-    def __init__(self, retry_after: int):
-        super().__init__("Muitas tentativas de login. Tente novamente mais tarde.", status_code=429)
+class RateLimitedError(AppException):
+    def __init__(self, retry_after: int, message: str = "Muitas tentativas. Tente novamente mais tarde."):
+        super().__init__(message, status_code=429)
         self.retry_after = retry_after
+
+
+class TooManyLoginAttemptsError(RateLimitedError):
+    def __init__(self, retry_after: int):
+        super().__init__(retry_after, "Muitas tentativas de login. Tente novamente mais tarde.")
+
+
+class SignupDisabledError(AppException):
+    def __init__(self):
+        super().__init__("Cadastro desativado", status_code=403)
+
+
+class InvalidEmailTokenError(AppException):
+    def __init__(self):
+        super().__init__("Link inválido ou expirado", status_code=400)
 
 
 class ApplicationAccessDeniedError(AppException):

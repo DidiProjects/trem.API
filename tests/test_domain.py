@@ -45,8 +45,10 @@ class TestUserStatusEnum:
         assert UserStatus.BLOCKED == "blocked"
         assert UserStatus.SUSPENDED == "suspended"
 
-    def test_has_exactly_three_states(self):
-        assert {s.value for s in UserStatus} == {"active", "blocked", "suspended"}
+    def test_states(self):
+        assert {s.value for s in UserStatus} == {
+            "active", "blocked", "suspended", "pending_verification", "pending_approval", "rejected",
+        }
 
 
 class TestTremPermissionEnum:
@@ -160,10 +162,9 @@ class TestChangePasswordRequest:
     @pytest.mark.parametrize(
         "senha,motivo",
         [
-            ("Curta1", "menos de 8 caracteres"),
-            ("semmaiuscula123", "sem maiúscula"),
-            ("SEMMINUSCULA123", "sem minúscula"),
-            ("SemNumeroAlgum", "sem dígito"),
+            ("Curta@12345", "menos de 12 caracteres"),
+            ("aaaaaaaaaaaaaaaa", "repete caracteres"),
+            ("x" * 129, "acima do máximo"),
         ],
     )
     def test_rejects_weak_password(self, senha, motivo):
@@ -171,8 +172,13 @@ class TestChangePasswordRequest:
             ChangePasswordRequest(current_password="Antiga@123", new_password=senha)
 
     def test_accepts_password_at_minimum_length(self):
-        body = ChangePasswordRequest(current_password="Antiga@123", new_password="Senha123")
-        assert len(body.new_password) == 8
+        body = ChangePasswordRequest(current_password="Antiga@123", new_password="cavalo verde")
+        assert len(body.new_password) == 12
+
+    def test_composition_is_not_required(self):
+        """NIST 800-63B: comprimento, não maiúscula/dígito obrigatórios."""
+        body = ChangePasswordRequest(current_password="x", new_password="correct horse battery")
+        assert body.new_password == "correct horse battery"
 
     def test_rejects_new_password_equal_to_current(self):
         with pytest.raises(ValidationError):
