@@ -393,8 +393,9 @@ repete uma vez depois de um refresh quando recebe 401.
 - Refreshes serializados entre abas com Web Locks: duas abas reapresentando o mesmo
   cookie disparariam a detecção de reuso e encerrariam o login. Logout é avisado às
   outras abas por `BroadcastChannel`.
-- Link de confirmação (`#verify-email=`) é confirmado ao carregar e sai da barra de
-  endereço e do histórico.
+- Links de confirmação (`#verify-email=`) e de redefinição de senha (`#reset-password=`)
+  saem da barra de endereço e do histórico ao carregar; o de redefinição fica só em
+  memória até a senha nova ser enviada.
 - Chave nova e códigos de recuperação aparecem num diálogo que é esvaziado ao fechar.
 - O segredo TOTP aparece como texto e link `otpauth:`, sem QR code: nenhum script de
   terceiros numa página que manipula segredos.
@@ -447,6 +448,30 @@ sobrescreve; o primeiro item do `X-Forwarded-For` é escolhido pelo cliente.
 - **Senha**: mínimo 12, máximo 128, sem regra de composição (NIST SP 800-63B); não pode
   conter o username nem o e-mail, nem ser quase toda o mesmo caractere. Vale também
   para a troca de senha.
+
+## Esqueci a senha
+
+```
+1. POST /auth/forgot-password {email}
+   → 202 sempre igual; só conta active recebe o link
+   → e-mail com link {API_URL}/#reset-password=<token> (256 bits, uso único, 60 min)
+
+2. POST /auth/reset-password {token, new_password}
+   → senha trocada, must_change_password=False
+   → todos os refresh tokens revogados, bloqueio de login zerado
+   → e-mail avisando o dono da conta
+```
+
+- Mesma tabela `email_tokens` do cadastro, `purpose='reset_password'`. Um pedido novo
+  invalida os links anteriores.
+- Conta pendente, suspensa, recusada ou bloqueada não recebe link: a pendente tem o
+  próprio link de confirmação, e as outras dependem do admin.
+- A política de senha (inclusive username e e-mail da conta) é checada **antes** de
+  gastar o token: senha recusada não queima o link.
+- **TOTP continua valendo**: o e-mail prova a caixa de entrada, não o segundo fator.
+- Limite: o mesmo `SIGNUP_MAX_PER_IP` por `SIGNUP_WINDOW_SECONDS`, contado por IP e por
+  e-mail. `PASSWORD_RESET_TTL_MINUTES` (60) controla a validade.
+- API keys do usuário continuam ativas: elas têm revogação própria em `/me/api-keys`.
 
 ## Fluxo Completo de Cadastro e Primeiro Acesso
 

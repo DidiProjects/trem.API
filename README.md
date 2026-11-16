@@ -167,6 +167,8 @@ GET  /.well-known/jwks.json
 POST /auth/register             {"username", "email", "password"}   → 202
 POST /auth/verify-email         {"token"}                            (from the e-mail link)
 POST /auth/resend-verification  {"email"}                            → 202
+POST /auth/forgot-password      {"email"}                            → 202
+POST /auth/reset-password       {"token", "new_password"}            (from the e-mail link)
 ```
 
 Second factor (TOTP):
@@ -210,8 +212,9 @@ DELETE /admin/applications/{slug}[/permissions/{name}]
 ```
 
 Sign-up: the account waits for e-mail confirmation, then for an admin to approve it and
-grant permissions. `register` and `resend-verification` answer the same whether or not the
-e-mail or username exists. Passwords: 12 to 128 characters, no composition rules, must not
+grant permissions. `register`, `resend-verification` and `forgot-password` answer the same
+whether or not the e-mail or username exists. A reset link lasts 60 minutes, works once, ends
+every session, and leaves TOTP on. Passwords: 12 to 128 characters, no composition rules, must not
 contain the username or e-mail.
 
 Login and refresh answer `{"access_token", "refresh_token", "token_type", "expires_in",
