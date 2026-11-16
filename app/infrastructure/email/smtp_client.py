@@ -36,6 +36,8 @@ Seu acesso foi criado. Use as credenciais abaixo para fazer login:
 
 ⚠️  Você será obrigado(a) a alterar sua senha no primeiro acesso.
 
+Entrar: {settings.frontend_url()}
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Mensagem automática — não responda este email
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
