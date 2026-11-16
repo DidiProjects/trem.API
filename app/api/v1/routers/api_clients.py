@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth_secure import verify_api_key
+from app.api.v1.dependencies import require_admin
+from app.domain.entities.user import User
 from app.core.exceptions import AppException
 from app.domain.schemas.api_client import (
     ApiClientCreate,
@@ -12,9 +13,7 @@ from app.domain.schemas.common import MessageResponse, PaginatedResponse
 from app.infrastructure.database.connection import get_db
 from app.services.api_client_service import ApiClientService
 
-# Administração de clientes fica atrás da master key (settings.API_KEY), a
-# mesma que protege /users. A master key não autentica as rotas de negócio —
-# serve só para gerir credenciais.
+# Administração de clientes exige um admin logado com segundo fator, como /users.
 router = APIRouter(prefix="/admin/clients", tags=["Admin: API Clients"])
 
 
@@ -22,7 +21,7 @@ router = APIRouter(prefix="/admin/clients", tags=["Admin: API Clients"])
 async def create_client(
     body: ApiClientCreate,
     db: AsyncSession = Depends(get_db),
-    _: str = Depends(verify_api_key),
+    _: User = Depends(require_admin),
 ):
     """Cria um cliente e devolve a chave em claro — só desta vez."""
     service = ApiClientService(db)
@@ -47,7 +46,7 @@ async def list_clients(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
-    _: str = Depends(verify_api_key),
+    _: User = Depends(require_admin),
 ):
     clients, total = await ApiClientService(db).list_clients(limit=limit, offset=offset)
     return PaginatedResponse(
@@ -62,7 +61,7 @@ async def list_clients(
 async def get_client(
     client_id: str,
     db: AsyncSession = Depends(get_db),
-    _: str = Depends(verify_api_key),
+    _: User = Depends(require_admin),
 ):
     try:
         client = await ApiClientService(db).get_client(client_id)
@@ -75,7 +74,7 @@ async def get_client(
 async def revoke_client(
     client_id: str,
     db: AsyncSession = Depends(get_db),
-    _: str = Depends(verify_api_key),
+    _: User = Depends(require_admin),
 ):
     """Revoga a chave. É irreversível — para religar, crie outro cliente."""
     try:

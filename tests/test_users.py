@@ -1,7 +1,7 @@
 """
 Testes dos endpoints de gestão de usuários: /users/*
 
-Endpoints admin protegidos por X-API-Key (verify_api_key).
+Endpoints admin protegidos por require_admin (login de admin com segundo fator).
 UserService é mockado para isolar da camada de banco de dados.
 """
 from datetime import datetime, timezone
@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from app.auth_secure import verify_api_key
+from app.api.v1.dependencies import require_admin
 from app.core.exceptions import UserAlreadyExistsError, UserNotFoundError, AppException
 from app.domain.entities.user import User
 from app.infrastructure.database.connection import get_db
@@ -39,14 +39,14 @@ def _make_user(
     )
 
 
-async def _mock_api_key():
-    return "test-api-key"
+async def _mock_admin():
+    return _make_user(username="chefe", permissions=("trem:admin",), status="active")
 
 
 @pytest.fixture
 def admin_client():
-    """Client com API key válida para endpoints admin."""
-    app.dependency_overrides[verify_api_key] = _mock_api_key
+    """Client autenticado como admin."""
+    app.dependency_overrides[require_admin] = _mock_admin
     app.dependency_overrides[get_db] = mock_get_db
     yield TestClient(app)
     app.dependency_overrides.clear()

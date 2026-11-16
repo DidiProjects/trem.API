@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth_secure import verify_api_key
+from app.api.v1.dependencies import require_admin
+from app.domain.entities.user import User
 from app.core.exceptions import AppException
 from app.domain.schemas.common import MessageResponse, PaginatedResponse
 from app.domain.schemas.user import UserCreate, UserResponse
@@ -19,7 +20,7 @@ def _to_response(user) -> UserResponse:
 async def create_user(
     body: UserCreate,
     db: AsyncSession = Depends(get_db),
-    _: str = Depends(verify_api_key),
+    _: User = Depends(require_admin),
 ):
     service = UserService(db)
     try:
@@ -34,7 +35,7 @@ async def list_users(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),
-    _: str = Depends(verify_api_key),
+    _: User = Depends(require_admin),
 ):
     service = UserService(db)
     users, total = await service.list_users(limit=limit, offset=offset)
@@ -50,7 +51,7 @@ async def list_users(
 async def get_user(
     user_id: str,
     db: AsyncSession = Depends(get_db),
-    _: str = Depends(verify_api_key),
+    _: User = Depends(require_admin),
 ):
     service = UserService(db)
     try:
@@ -64,7 +65,7 @@ async def get_user(
 async def send_provisional_password(
     user_id: str,
     db: AsyncSession = Depends(get_db),
-    _: str = Depends(verify_api_key),
+    _: User = Depends(require_admin),
 ):
     service = UserService(db)
     try:

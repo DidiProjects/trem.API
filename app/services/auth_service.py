@@ -10,11 +10,17 @@ from app.core.exceptions import (
     AwaitingApprovalError,
     EmailNotVerifiedError,
     InvalidCredentialsError,
+    InvalidMfaCodeError,
+    TokenExpiredError,
+    TokenInvalidError,
     UserBlockedError,
 )
 from app.core.security import (
+    MFA_AUDIENCE,
     burn_password_check,
     create_access_token,
+    create_mfa_token,
+    decode_token,
     generate_refresh_token,
     hash_password,
     hash_token,
@@ -27,6 +33,7 @@ from app.domain.schemas.auth import TokenResponse
 from app.repositories.permission_repository import PermissionRepository
 from app.repositories.user_repository import UserRepository
 from app.services.login_throttle import LoginThrottle, get_login_throttle
+from app.services.mfa_service import MfaService
 
 logger = logging.getLogger(__name__)
 
@@ -53,8 +60,11 @@ class AuthService:
         audience: str = TREM_APP,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
-    ) -> tuple[TokenResponse, str]:
-        """Returns the response body and the raw refresh token, which the caller places."""
+    ) -> tuple[TokenResponse, Optional[str]]:
+        """
+        Returns the response body and the raw refresh token, which the caller places. With
+        TOTP on, the body is a challenge for /auth/mfa/verify and there is no refresh token.
+        """
         self._throttle.check(username, ip_address)
 
         user = await self._repo.get_by_username(username)
@@ -83,8 +93,43 @@ class AuthService:
             await self._repo.update_password(
                 user.id, hash_password(password), user.must_change_password
             )
-        await self._repo.update_last_login(user.id, datetime.now(timezone.utc))
 
+        if user.totp_enabled:
+            challenge = TokenResponse(
+                mfa_required=True, mfa_token=create_mfa_token(user.id, audience), token_type=None
+            )
+            return challenge, None
+        return await self._issue(user, application, ("pwd",), ip_address, user_agent)
+
+    async def verify_mfa(
+        self,
+        mfa_token: str,
+        code: Optional[str] = None,
+        recovery_code: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ) -> tuple[TokenResponse, str]:
+        """Second step of a login with TOTP: the challenge from /auth/login plus a code."""
+        try:
+            claims = decode_token(mfa_token, audience=MFA_AUDIENCE)
+        except (TokenExpiredError, TokenInvalidError):
+            raise InvalidCredentialsError("Desafio expirado. Faça o login de novo.")
+        if claims.get("type") != "mfa":
+            raise InvalidCredentialsError()
+
+        user = await self._repo.get_by_id(claims["sub"])
+        if not user or not user.is_active:
+            raise InvalidCredentialsError()
+        application = await self._permissions.get_application(claims["app"])
+        if application is None or not _has_access(user, application.slug):
+            raise ApplicationAccessDeniedError()
+
+        if not await MfaService(self._session).check(user.id, code=code, recovery_code=recovery_code):
+            raise InvalidMfaCodeError()
+        return await self._issue(user, application, ("pwd", "otp"), ip_address, user_agent)
+
+    async def _issue(self, user: User, application, amr: tuple[str, ...], ip_address, user_agent):
+        await self._repo.update_last_login(user.id, datetime.now(timezone.utc))
         raw_refresh = generate_refresh_token()
         await self._repo.create_refresh_token(
             user_id=user.id,
@@ -93,8 +138,9 @@ class AuthService:
             application_id=application.id,
             ip_address=ip_address,
             user_agent=user_agent,
+            amr=" ".join(amr),
         )
-        return self._response(user, audience), raw_refresh
+        return self._response(user, application.slug, amr), raw_refresh
 
     async def refresh(
         self,
@@ -137,9 +183,10 @@ class AuthService:
             family_id=stored.family_id,
             ip_address=ip_address,
             user_agent=user_agent,
+            amr=stored.amr,
         )
         await self._repo.set_refresh_token_successor(stored.id, successor.id)
-        return self._response(user, audience), raw_refresh
+        return self._response(user, audience, tuple(stored.amr.split())), raw_refresh
 
     async def change_password(
         self,
@@ -176,7 +223,7 @@ class AuthService:
     def _refresh_expiry(self) -> datetime:
         return datetime.now(timezone.utc) + timedelta(days=get_settings().REFRESH_TOKEN_EXPIRE_DAYS)
 
-    def _response(self, user: User, audience: str) -> TokenResponse:
+    def _response(self, user: User, audience: str, amr: tuple[str, ...]) -> TokenResponse:
         settings = get_settings()
         access_token = create_access_token(
             user_id=user.id,
@@ -184,6 +231,7 @@ class AuthService:
             permissions=user.permissions,
             must_change_password=user.must_change_password,
             audience=audience,
+            amr=amr,
         )
         return TokenResponse(
             access_token=access_token,

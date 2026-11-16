@@ -4,7 +4,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response, 
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1.dependencies import get_current_user
+from app.api.v1.dependencies import get_current_active_user, get_current_user
 from app.core.config import get_settings
 from app.core.exceptions import AppException, RateLimitedError
 from app.core.security import jwks
@@ -12,12 +12,19 @@ from app.domain.entities.user import User
 from app.domain.schemas.auth import (
     ChangePasswordRequest,
     LoginRequest,
+    MfaCodeRequest,
+    MfaDisableRequest,
+    MfaEnrollResponse,
+    MfaVerifyRequest,
+    PasswordConfirmation,
+    RecoveryCodesResponse,
     RefreshRequest,
     TokenResponse,
 )
 from app.domain.schemas.common import MessageResponse
 from app.infrastructure.database.connection import get_db
 from app.services.auth_service import AuthService
+from app.services.mfa_service import MfaService
 from app.utils.client_ip import client_ip
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -91,11 +98,92 @@ async def login(
     except AppException as e:
         raise http_error(e)
 
-    if body.session == "cookie":
+    return _place(tokens, raw_refresh, body.session, response)
+
+
+def _place(tokens: TokenResponse, raw_refresh: Optional[str], session: str, response: Response) -> TokenResponse:
+    if raw_refresh is None:  # a second-factor challenge: no session yet
+        return tokens
+    if session == "cookie":
         _set_session_cookie(response, raw_refresh)
     else:
         tokens.refresh_token = raw_refresh
     return tokens
+
+
+@router.post("/mfa/verify", response_model=TokenResponse, response_model_exclude_none=True)
+async def verify_mfa(
+    body: MfaVerifyRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        tokens, raw_refresh = await AuthService(db).verify_mfa(
+            body.mfa_token,
+            code=body.code,
+            recovery_code=body.recovery_code,
+            ip_address=client_ip(request),
+            user_agent=request.headers.get("User-Agent"),
+        )
+    except AppException as e:
+        raise http_error(e)
+    return _place(tokens, raw_refresh, body.session, response)
+
+
+@router.post("/mfa/enroll", response_model=MfaEnrollResponse)
+async def enroll_mfa(
+    body: PasswordConfirmation,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Starts a TOTP enrolment: scan the URI, then confirm with a code."""
+    try:
+        secret, uri = await MfaService(db).enroll(user, body.password)
+    except AppException as e:
+        raise http_error(e)
+    return MfaEnrollResponse(secret=secret, otpauth_uri=uri)
+
+
+@router.post("/mfa/confirm", response_model=RecoveryCodesResponse)
+async def confirm_mfa(
+    body: MfaCodeRequest,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        codes = await MfaService(db).confirm(user, body.code)
+    except AppException as e:
+        raise http_error(e)
+    return RecoveryCodesResponse(recovery_codes=codes)
+
+
+@router.post("/mfa/recovery-codes", response_model=RecoveryCodesResponse)
+async def regenerate_recovery_codes(
+    body: MfaDisableRequest,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """New set of recovery codes; the old ones stop working."""
+    try:
+        codes = await MfaService(db).regenerate_recovery_codes(user, body.password, body.code)
+    except AppException as e:
+        raise http_error(e)
+    return RecoveryCodesResponse(recovery_codes=codes)
+
+
+@router.post("/mfa/disable", response_model=MessageResponse)
+async def disable_mfa(
+    body: MfaDisableRequest,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Turns TOTP off and ends every session of the account."""
+    try:
+        await MfaService(db).disable(user, body.password, body.code)
+    except AppException as e:
+        raise http_error(e)
+    return MessageResponse(message="Segundo fator desativado")
 
 
 @router.post("/refresh", response_model=TokenResponse, response_model_exclude_none=True)
@@ -118,11 +206,7 @@ async def refresh(
             error.headers = {**(error.headers or {}), "set-cookie": _expired_cookie_header()}
         raise error
 
-    if from_cookie:
-        _set_session_cookie(response, raw_refresh)
-    else:
-        tokens.refresh_token = raw_refresh
-    return tokens
+    return _place(tokens, raw_refresh, "cookie" if from_cookie else "body", response)
 
 
 def _expired_cookie_header() -> str:

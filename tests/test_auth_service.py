@@ -91,6 +91,7 @@ def _stored_token(revoked=False, expired=False, replaced=False, application="tre
         replaced_by=uuid.uuid4() if replaced else None,
         application_id=TREM_ID,
         application=SimpleNamespace(slug=application),
+        amr="pwd",
         expires_at=datetime.now(timezone.utc)
         + (timedelta(days=-1) if expired else timedelta(days=7)),
     )

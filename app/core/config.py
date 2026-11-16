@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     LOGIN_MAX_FAILURES_PER_IP: int = 20
     LOGIN_FAILURE_WINDOW_SECONDS: int = 900
 
+    # TOTP secrets are encrypted with this key (32 bytes, base64url). Without it, MFA is off,
+    # and so is every admin route, which requires a login proven with a second factor.
+    MFA_ENCRYPTION_KEY: str = ""
+    MFA_MAX_ATTEMPTS: int = 5
+    MFA_WINDOW_SECONDS: int = 300
+    MFA_CHALLENGE_MINUTES: int = 5
+
     # Self sign-up. Admins are the active users with trem:admin; ADMIN_EMAIL (or, unset,
     # EMAIL_RECIPIENT) is notified too, which covers the time before the first admin exists.
     SIGNUP_ENABLED: bool = True

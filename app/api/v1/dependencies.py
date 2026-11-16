@@ -52,6 +52,7 @@ async def get_current_user(
             detail="Usuário bloqueado ou suspenso",
         )
 
+    user.amr = tuple(payload.get("amr") or ())
     return user
 
 
@@ -128,6 +129,21 @@ async def get_current_principal(
         detail="Credencial não fornecida. Envie X-API-Key ou Authorization: Bearer.",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+
+async def require_admin(user: User = Depends(get_current_active_user)) -> User:
+    """
+    Administration needs a person, not a key: a JWT login holding trem:admin, proven with
+    the second factor. A leaked password or API key alone cannot reach it.
+    """
+    if not user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permissão insuficiente para este recurso")
+    if "otp" not in user.amr:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administração exige login com segundo fator (TOTP)",
+        )
+    return user
 
 
 def require_permission(key: str) -> Callable:

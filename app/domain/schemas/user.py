@@ -50,3 +50,20 @@ class UserResponse(BaseModel):
     provisional_password_sent_at: Optional[datetime]
     created_at: datetime
     last_login_at: Optional[datetime]
+    email_verified_at: Optional[datetime] = None
+    approved_at: Optional[datetime] = None
+    approved_by: Optional[str] = None
+    totp_enabled: bool = False
+
+
+class PermissionSet(BaseModel):
+    """The complete set of permissions an account ends up with; may be empty."""
+
+    permissions: list[str] = Field(default_factory=list, description='Chaves "<aplicação>:<permissão>"')
+
+    @field_validator("permissions")
+    @classmethod
+    def validate_permissions(cls, v: list[str]) -> list[str]:
+        for key in v:
+            split_permission_key(key)
+        return sorted(set(v))

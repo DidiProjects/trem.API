@@ -38,6 +38,7 @@ class TestMetadata:
         assert set(Base.metadata.tables) == {
             "applications",
             "email_tokens",
+            "mfa_recovery_codes",
             "permissions",
             "users",
             "refresh_tokens",
