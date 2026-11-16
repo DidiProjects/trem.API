@@ -7,7 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.interfaces.i_user_repository import IUserRepository
 from app.domain.entities.user import User
-from app.infrastructure.database.models import PermissionModel, RefreshTokenModel, UserModel
+from app.infrastructure.database.models import (
+    ApplicationModel,
+    PermissionModel,
+    RefreshTokenModel,
+    UserModel,
+    user_permissions,
+)
 from app.repositories.base import BaseRepository
 
 
@@ -39,6 +45,9 @@ def _to_entity(orm: UserModel) -> User:
         created_at=orm.created_at,
         updated_at=orm.updated_at,
         last_login_at=orm.last_login_at,
+        email_verified_at=orm.email_verified_at,
+        approved_at=orm.approved_at,
+        approved_by=str(orm.approved_by) if orm.approved_by else None,
     )
 
 
@@ -72,6 +81,8 @@ class UserRepository(BaseRepository, IUserRepository):
         password_hash: str,
         permission_ids: list[str],
         email: Optional[str] = None,
+        status: Optional[str] = None,
+        must_change_password: bool = True,
     ) -> User:
         ids = [i for i in (_as_uuid(p) for p in permission_ids) if i]
         permissions = (
@@ -82,10 +93,50 @@ class UserRepository(BaseRepository, IUserRepository):
             email=email,
             password_hash=password_hash,
             permissions=list(permissions),
+            must_change_password=must_change_password,
         )
+        if status:
+            orm.status = status
         self._session.add(orm)
         await self._session.flush()
         return _to_entity(orm)
+
+    async def get_by_email(self, email: str) -> Optional[User]:
+        result = await self._session.execute(
+            select(UserModel).where(func.lower(UserModel.email) == email.lower())
+        )
+        orm = result.scalar_one_or_none()
+        return _to_entity(orm) if orm else None
+
+    async def delete(self, user_id: str) -> None:
+        orm = await self._session.get(UserModel, _as_uuid(user_id))
+        if orm:
+            await self._session.delete(orm)
+            await self._session.flush()
+
+    async def mark_email_verified(self, user_id: str, at: datetime, status: str) -> None:
+        await self._session.execute(
+            update(UserModel)
+            .where(UserModel.id == _as_uuid(user_id))
+            .values(email_verified_at=at, status=status, updated_at=at)
+        )
+
+    async def emails_with_permission(self, key: str) -> list[str]:
+        """E-mails of active users holding a permission, e.g. who to tell about a new sign-up."""
+        application, name = key.split(":", 1)
+        result = await self._session.execute(
+            select(UserModel.email)
+            .join(user_permissions, user_permissions.c.user_id == UserModel.id)
+            .join(PermissionModel, PermissionModel.id == user_permissions.c.permission_id)
+            .join(ApplicationModel, ApplicationModel.id == PermissionModel.application_id)
+            .where(
+                ApplicationModel.slug == application,
+                PermissionModel.name == name,
+                UserModel.status == "active",
+                UserModel.email.is_not(None),
+            )
+        )
+        return sorted(set(result.scalars().all()))
 
     async def update_password(
         self,

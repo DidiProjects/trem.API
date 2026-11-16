@@ -15,6 +15,10 @@ class UserStatus(StrEnum):
     BLOCKED = "blocked"
     ACTIVE = "active"
     SUSPENDED = "suspended"
+    # Self sign-up: the e-mail is confirmed first, then an admin approves the account.
+    PENDING_VERIFICATION = "pending_verification"
+    PENDING_APPROVAL = "pending_approval"
+    REJECTED = "rejected"
 
 
 @dataclass
@@ -30,6 +34,9 @@ class User:
     created_at: datetime
     updated_at: datetime
     last_login_at: Optional[datetime]
+    email_verified_at: Optional[datetime] = None
+    approved_at: Optional[datetime] = None
+    approved_by: Optional[str] = None
 
     @property
     def is_active(self) -> bool:

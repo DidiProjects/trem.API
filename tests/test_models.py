@@ -37,6 +37,7 @@ class TestMetadata:
     def test_declares_expected_tables(self):
         assert set(Base.metadata.tables) == {
             "applications",
+            "email_tokens",
             "permissions",
             "users",
             "refresh_tokens",

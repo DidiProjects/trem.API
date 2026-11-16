@@ -34,6 +34,14 @@ class Settings(BaseSettings):
     LOGIN_MAX_FAILURES_PER_IP: int = 20
     LOGIN_FAILURE_WINDOW_SECONDS: int = 900
 
+    # Self sign-up. Admins are the active users with trem:admin; ADMIN_EMAIL (or, unset,
+    # EMAIL_RECIPIENT) is notified too, which covers the time before the first admin exists.
+    SIGNUP_ENABLED: bool = True
+    ADMIN_EMAIL: Optional[str] = None
+    EMAIL_TOKEN_TTL_HOURS: int = 24
+    SIGNUP_MAX_PER_IP: int = 5
+    SIGNUP_WINDOW_SECONDS: int = 3600
+
     # Browser session: the refresh token lives in an HttpOnly cookie scoped to /auth.
     REFRESH_COOKIE_NAME: str = "trem_refresh"
     COOKIE_SECURE: bool = True

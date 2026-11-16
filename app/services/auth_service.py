@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.exceptions import (
     ApplicationAccessDeniedError,
+    AwaitingApprovalError,
+    EmailNotVerifiedError,
     InvalidCredentialsError,
     UserBlockedError,
 )
@@ -20,7 +22,7 @@ from app.core.security import (
     verify_password,
 )
 from app.domain.entities.permission import TREM_APP
-from app.domain.entities.user import User
+from app.domain.entities.user import User, UserStatus
 from app.domain.schemas.auth import TokenResponse
 from app.repositories.permission_repository import PermissionRepository
 from app.repositories.user_repository import UserRepository
@@ -65,6 +67,11 @@ class AuthService:
             raise InvalidCredentialsError()
         self._throttle.reset(username)
 
+        # The password is already proven here, so naming the state reveals nothing new.
+        if user.status == UserStatus.PENDING_VERIFICATION:
+            raise EmailNotVerifiedError()
+        if user.status == UserStatus.PENDING_APPROVAL:
+            raise AwaitingApprovalError()
         if not user.is_active:
             raise UserBlockedError()
 

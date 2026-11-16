@@ -402,6 +402,51 @@ class TestAppOnMigratedSchema:
         assert second
 
 
+    def test_sign_up_and_admin_lookup_on_postgres(self, alembic_cfg):
+        from app.services.rate_limit import SlidingWindowLimiter
+        from app.services.signup_service import SignupService
+
+        command.upgrade(alembic_cfg, "head")
+        admin = uuid.uuid4()
+        sql(
+            "INSERT INTO users (id, username, email, password_hash, status) "
+            "VALUES (:id, 'chefe', 'chefe@example.com', 'x', 'active')",
+            id=admin,
+        )
+        sql(
+            "INSERT INTO user_permissions (user_id, permission_id) "
+            "SELECT :u, id FROM permissions WHERE name = 'admin'",
+            u=admin,
+        )
+        sent = []
+
+        class Email:
+            def __getattr__(self, name):
+                async def send(**kwargs):
+                    sent.append((name, kwargs))
+                return send
+
+        limiter = SlidingWindowLimiter(10, 60)
+
+        async def register(session):
+            service = SignupService(session, Email(), limiter)
+            await service.register("nova", "Nova@Example.com", "cavalo bateria grampo", "1.2.3.4")
+            for send, kwargs in service.outbox:
+                await send(**kwargs)
+
+        self.run(register)
+        token = sent[0][1]["link"].split("#verify-email=", 1)[1]
+
+        async def verify(session):
+            service = SignupService(session, Email(), limiter)
+            await service.verify_email(token)
+            for send, kwargs in service.outbox:
+                await send(**kwargs)
+
+        self.run(verify)
+        assert sql("SELECT status, email FROM users WHERE username = 'nova'") == [("pending_approval", "nova@example.com")]
+        assert [k["to"] for name, k in sent if name == "send_signup_pending_approval"] == ["chefe@example.com"]
+
 class TestUpgrade006:
     def test_existing_tokens_become_single_token_families_of_trem(self, alembic_cfg):
         command.upgrade(alembic_cfg, "005")
@@ -429,3 +474,42 @@ class TestUpgrade006:
             "SELECT column_name FROM information_schema.columns WHERE table_name = 'refresh_tokens'"
         )}
         assert {"family_id", "replaced_by", "application_id"} <= columns
+
+
+class TestUpgrade007:
+    def test_new_statuses_and_email_tokens(self, alembic_cfg):
+        command.upgrade(alembic_cfg, "007")
+        uid = uuid.uuid4()
+        sql(
+            "INSERT INTO users (id, username, email, password_hash, status) "
+            "VALUES (:id, 'nova', 'nova@example.com', 'x', 'pending_verification')",
+            id=uid,
+        )
+        sql(
+            "INSERT INTO email_tokens (user_id, purpose, token_hash, expires_at) "
+            "VALUES (:u, 'verify_email', :h, now() + interval '1 day')",
+            u=uid, h="a" * 64,
+        )
+        with pytest.raises(IntegrityError):
+            sql("UPDATE users SET status = 'inventado' WHERE id = :id", id=uid)
+
+        sql("DELETE FROM users WHERE id = :id", id=uid)
+        assert sql("SELECT count(*) FROM email_tokens")[0][0] == 0
+
+    def test_existing_accounts_keep_their_status(self, alembic_cfg):
+        command.upgrade(alembic_cfg, "006")
+        uid = uuid.uuid4()
+        sql("INSERT INTO users (id, username, password_hash, status) VALUES (:id, 'u', 'x', 'active')", id=uid)
+        command.upgrade(alembic_cfg, "007")
+        assert sql("SELECT status, email_verified_at FROM users")[0] == ("active", None)
+
+    def test_downgrade_blocks_unapproved_sign_ups(self, alembic_cfg):
+        command.upgrade(alembic_cfg, "007")
+        for name, status in (("a", "active"), ("p", "pending_approval"), ("r", "rejected")):
+            sql(
+                "INSERT INTO users (id, username, password_hash, status) VALUES (:id, :n, 'x', :s)",
+                id=uuid.uuid4(), n=name, s=status,
+            )
+        command.downgrade(alembic_cfg, "006")
+        assert dict(sql("SELECT username, status FROM users")) == {"a": "active", "p": "blocked", "r": "blocked"}
+        command.upgrade(alembic_cfg, "007")

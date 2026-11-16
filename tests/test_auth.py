@@ -239,17 +239,10 @@ class TestChangePassword:
         )
         assert response.status_code == 422
 
-    def test_change_password_no_uppercase(self, authenticated_client):
+    def test_change_password_below_twelve_chars(self, authenticated_client):
         response = authenticated_client.post(
             "/auth/change-password",
-            json={"current_password": "Senha@123", "new_password": "somin%sculas123"},
-        )
-        assert response.status_code == 422
-
-    def test_change_password_no_digit(self, authenticated_client):
-        response = authenticated_client.post(
-            "/auth/change-password",
-            json={"current_password": "Senha@123", "new_password": "SemNumerosAqui"},
+            json={"current_password": "Senha@123", "new_password": "Nova@Senha1"},
         )
         assert response.status_code == 422
 

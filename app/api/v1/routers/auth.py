@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.dependencies import get_current_user
 from app.core.config import get_settings
-from app.core.exceptions import AppException, TooManyLoginAttemptsError
+from app.core.exceptions import AppException, RateLimitedError
 from app.core.security import jwks
 from app.domain.entities.user import User
 from app.domain.schemas.auth import (
@@ -30,9 +30,9 @@ CSRF_HEADER = "X-Requested-With"
 CSRF_VALUE = "trem"
 
 
-def _error(e: AppException) -> HTTPException:
+def http_error(e: AppException) -> HTTPException:
     headers = None
-    if isinstance(e, TooManyLoginAttemptsError):
+    if isinstance(e, RateLimitedError):
         headers = {"Retry-After": str(e.retry_after)}
     return HTTPException(status_code=e.status_code, detail=e.message, headers=headers)
 
@@ -89,7 +89,7 @@ async def login(
             user_agent=request.headers.get("User-Agent"),
         )
     except AppException as e:
-        raise _error(e)
+        raise http_error(e)
 
     if body.session == "cookie":
         _set_session_cookie(response, raw_refresh)
@@ -113,7 +113,7 @@ async def refresh(
             user_agent=request.headers.get("User-Agent"),
         )
     except AppException as e:
-        error = _error(e)
+        error = http_error(e)
         if from_cookie:
             error.headers = {**(error.headers or {}), "set-cookie": _expired_cookie_header()}
         raise error
@@ -146,7 +146,7 @@ async def change_password(
         )
         return MessageResponse(message="Senha alterada com sucesso")
     except AppException as e:
-        raise _error(e)
+        raise http_error(e)
 
 
 @router.post("/logout", response_model=MessageResponse)
