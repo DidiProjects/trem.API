@@ -126,7 +126,7 @@ class TestAuth:
         assert client_no_auth.get("/llm/health").status_code == 401
         assert upstream.requests == []
 
-    @pytest.mark.parametrize("profiles", [("file_editor",), ("airline_company",), ("linkedin_scraper",)])
+    @pytest.mark.parametrize("profiles", [("trem:file_editor",), ("trem:airline_company",), ("trem:linkedin_scraper",)])
     @pytest.mark.parametrize(
         "method,path",
         [
@@ -151,7 +151,7 @@ class TestAuth:
 
     def test_ai_among_other_profiles_is_enough(self, upstream):
         async def user():
-            return make_mock_user(("file_editor", "ai"))
+            return make_mock_user(("trem:file_editor", "trem:ai"))
 
         client = _authenticated_as(user)
         try:
@@ -162,7 +162,7 @@ class TestAuth:
     def test_upstream_gets_internal_key_not_client_headers(self, client, upstream):
         # Key lookup needs the database; only what reaches upstream matters here.
         app.dependency_overrides[get_current_principal] = lambda: Principal.from_user(
-            make_mock_user(("ai",))
+            make_mock_user(("trem:ai",))
         )
         response = client.post(
             "/llm/v1/chat/completions",

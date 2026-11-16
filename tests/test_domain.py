@@ -21,7 +21,7 @@ from app.core.exceptions import (
     UserBlockedError,
     UserNotFoundError,
 )
-from app.domain.entities.profile import AIRLINE_COMPANY, FILE_EDITOR, Profile, ProfileName
+from app.domain.entities.permission import Permission, TremPermission, split_permission_key
 from app.domain.entities.user import UserStatus
 from app.domain.schemas.auth import (
     AccessTokenResponse,
@@ -50,14 +50,29 @@ class TestUserStatusEnum:
         assert {s.value for s in UserStatus} == {"active", "blocked", "suspended"}
 
 
-class TestProfileNameEnum:
+class TestTremPermissionEnum:
     def test_compares_equal_to_plain_string(self):
-        assert ProfileName.FILE_EDITOR == "file_editor"
-        assert ProfileName.AIRLINE_COMPANY == "airline_company"
+        assert TremPermission.FILE_EDITOR == "trem:file_editor"
+        assert TremPermission.AIRLINE_COMPANY == "trem:airline_company"
 
-    def test_legacy_constants_still_resolve(self):
-        assert FILE_EDITOR == "file_editor"
-        assert AIRLINE_COMPANY == "airline_company"
+    def test_every_key_is_well_formed(self):
+        for key in TremPermission:
+            assert split_permission_key(key)[0] == "trem"
+
+
+class TestPermissionKey:
+    @pytest.mark.parametrize("key,expected", [
+        ("trem:ai", ("trem", "ai")),
+        ("financas:read.all", ("financas", "read.all")),
+        ("my-app:file_editor", ("my-app", "file_editor")),
+    ])
+    def test_splits_application_and_name(self, key, expected):
+        assert split_permission_key(key) == expected
+
+    @pytest.mark.parametrize("key", ["ai", "trem:", ":ai", "Trem:ai", "trem:AI", "t:ai", "trem:a i", "a:b:c d"])
+    def test_rejects_malformed_keys(self, key):
+        with pytest.raises(ValueError):
+            split_permission_key(key)
 
 
 class TestUserEntity:
@@ -80,11 +95,11 @@ class TestUserEntity:
         assert user.is_active is False
         assert user.can_authenticate is False
 
-    def test_has_profile(self):
-        user = make_mock_user((ProfileName.FILE_EDITOR.value, ProfileName.AI.value))
-        assert user.has_profile("file_editor") is True
-        assert user.has_profile("ai") is True
-        assert user.has_profile("airline_company") is False
+    def test_has_permission(self):
+        user = make_mock_user((TremPermission.FILE_EDITOR.value, TremPermission.AI.value))
+        assert user.has_permission("trem:file_editor") is True
+        assert user.has_permission("trem:ai") is True
+        assert user.has_permission("trem:airline_company") is False
 
     def test_repr_hides_password_hash(self):
         assert "$argon2id$" not in repr(make_mock_user())
@@ -92,15 +107,16 @@ class TestUserEntity:
     def test_repr_shows_identity(self):
         text = repr(make_mock_user())
         assert "testuser" in text
-        assert "file_editor" in text
+        assert "trem:file_editor" in text
 
 
-class TestProfileEntity:
-    def test_holds_fields(self):
-        profile = Profile(
-            id="id-1", name="file_editor", description="desc", created_at=datetime.now(timezone.utc)
+class TestPermissionEntity:
+    def test_key_joins_application_and_name(self):
+        permission = Permission(
+            id="id-1", application="trem", name="file_editor", description="desc",
+            created_at=datetime.now(timezone.utc),
         )
-        assert profile.name == "file_editor"
+        assert permission.key == "trem:file_editor"
 
 
 # ---------------------------------------------------------------------------
@@ -197,59 +213,60 @@ class TestTokenResponses:
 class TestUserCreate:
     def test_valid_payload(self):
         body = UserCreate(
-            username="joao.silva", email="joao@example.com", profile_names=["file_editor"]
+            username="joao.silva", email="joao@example.com", permissions=["trem:file_editor"]
         )
         assert body.username == "joao.silva"
 
     def test_email_is_optional(self):
-        assert UserCreate(username="joao", profile_names=["file_editor"]).email is None
+        assert UserCreate(username="joao", permissions=["trem:file_editor"]).email is None
 
     def test_email_is_lowercased(self):
         body = UserCreate(
-            username="joao", email="Joao@Example.COM", profile_names=["file_editor"]
+            username="joao", email="Joao@Example.COM", permissions=["trem:file_editor"]
         )
         assert body.email == "joao@example.com"
 
     @pytest.mark.parametrize("email", ["nao-e-email", "sem@dominio", "@example.com", "a b@c.com"])
     def test_rejects_invalid_email(self, email):
         with pytest.raises(ValidationError):
-            UserCreate(username="joao", email=email, profile_names=["file_editor"])
+            UserCreate(username="joao", email=email, permissions=["trem:file_editor"])
 
     @pytest.mark.parametrize("username", ["ab", "x" * 51])
     def test_rejects_username_out_of_length_bounds(self, username):
         with pytest.raises(ValidationError):
-            UserCreate(username=username, profile_names=["file_editor"])
+            UserCreate(username=username, permissions=["trem:file_editor"])
 
     @pytest.mark.parametrize("username", ["joao silva", "joão", "joao@silva", "joao/silva"])
     def test_rejects_username_with_forbidden_characters(self, username):
         with pytest.raises(ValidationError):
-            UserCreate(username=username, profile_names=["file_editor"])
+            UserCreate(username=username, permissions=["trem:file_editor"])
 
     @pytest.mark.parametrize("username", ["abc", "joao_silva", "joao.silva", "joao-silva", "user123"])
     def test_accepts_valid_username_shapes(self, username):
-        assert UserCreate(username=username, profile_names=["file_editor"]).username == username
+        assert UserCreate(username=username, permissions=["trem:file_editor"]).username == username
 
-    @pytest.mark.parametrize("profile", [p.value for p in ProfileName])
-    def test_accepts_known_profiles(self, profile):
-        assert UserCreate(username="joao", profile_names=[profile]).profile_names == [profile]
+    @pytest.mark.parametrize("key", [p.value for p in TremPermission] + ["financas:read"])
+    def test_accepts_well_formed_keys(self, key):
+        assert UserCreate(username="joao", permissions=[key]).permissions == [key]
 
-    @pytest.mark.parametrize("profile", ["admin", "superuser", "", "FILE_EDITOR"])
-    def test_rejects_unknown_profile(self, profile):
+    @pytest.mark.parametrize("key", ["ai", "superuser", "", "FILE_EDITOR", "trem:"])
+    def test_rejects_malformed_key(self, key):
         with pytest.raises(ValidationError):
-            UserCreate(username="joao", profile_names=["ai", profile])
+            UserCreate(username="joao", permissions=["trem:ai", key])
 
-    def test_requires_at_least_one_profile(self):
+    def test_requires_at_least_one_permission(self):
         with pytest.raises(ValidationError):
-            UserCreate(username="joao", profile_names=[])
+            UserCreate(username="joao", permissions=[])
 
-    def test_repeated_profiles_are_collapsed_and_sorted(self):
-        body = UserCreate(username="joao", profile_names=["file_editor", "ai", "file_editor"])
-        assert body.profile_names == ["ai", "file_editor"]
+    def test_repeated_permissions_are_collapsed_and_sorted(self):
+        body = UserCreate(username="joao", permissions=["trem:file_editor", "trem:ai", "trem:file_editor"])
+        assert body.permissions == ["trem:ai", "trem:file_editor"]
 
-    def test_single_profile_string_is_not_accepted(self):
-        """The old single-profile payload must fail loudly instead of being half-read."""
+    @pytest.mark.parametrize("field", ["profile_name", "profile_names"])
+    def test_old_profile_payload_is_not_accepted(self, field):
+        """Old payloads must fail loudly instead of being half-read."""
         with pytest.raises(ValidationError):
-            UserCreate(username="joao", profile_name="file_editor")
+            UserCreate(username="joao", **{field: ["file_editor"]})
 
 
 class TestUserResponse:

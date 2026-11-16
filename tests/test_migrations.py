@@ -100,6 +100,26 @@ def client_profiles(cid: uuid.UUID) -> set[str]:
     return {r[0] for r in rows}
 
 
+def user_permissions(uid: uuid.UUID) -> set[str]:
+    rows = sql(
+        "SELECT a.slug || ':' || p.name FROM user_permissions l "
+        "JOIN permissions p ON p.id = l.permission_id "
+        "JOIN applications a ON a.id = p.application_id WHERE l.user_id = :id",
+        id=uid,
+    )
+    return {r[0] for r in rows}
+
+
+def client_permissions(cid: uuid.UUID) -> set[str]:
+    rows = sql(
+        "SELECT a.slug || ':' || p.name FROM api_client_permissions l "
+        "JOIN permissions p ON p.id = l.permission_id "
+        "JOIN applications a ON a.id = p.application_id WHERE l.client_id = :id",
+        id=cid,
+    )
+    return {r[0] for r in rows}
+
+
 def legacy_profile(table: str, row_id: uuid.UUID) -> str:
     return sql(
         f"SELECT p.name FROM {table} t JOIN profiles p ON p.id = t.profile_id WHERE t.id = :id",
@@ -209,11 +229,95 @@ class TestDowngrade004:
         command.downgrade(alembic_cfg, "003")
         command.upgrade(alembic_cfg, "head")
 
-        assert user_profiles(editor) == ALL_PROFILES
+        assert user_permissions(editor) == {f"trem:{p}" for p in ALL_PROFILES}
+
+
+class TestUpgrade005:
+    def test_every_grant_is_kept_under_the_trem_application(self, alembic_cfg):
+        command.upgrade(alembic_cfg, "003")
+        editor = seed_user("editor", "file_editor")
+        files = seed_client("files-app", "file_editor")
+        command.upgrade(alembic_cfg, "005")
+
+        assert user_permissions(editor) == {f"trem:{p}" for p in ALL_PROFILES}
+        assert client_permissions(files) == {"trem:file_editor", "trem:ai"}
+        assert sql("SELECT count(*) FROM user_permissions WHERE granted_at IS NULL")[0][0] == 0
+        assert sql("SELECT count(*) FROM user_permissions WHERE granted_by IS NOT NULL")[0][0] == 0
+
+    def test_admin_exists_but_is_granted_to_no_one(self, alembic_cfg):
+        command.upgrade(alembic_cfg, "003")
+        seed_user("editor", "file_editor")
+        command.upgrade(alembic_cfg, "005")
+
+        names = {r[0] for r in sql("SELECT name FROM permissions")}
+        assert names == ALL_PROFILES | {"admin"}
+        assert sql(
+            "SELECT count(*) FROM user_permissions l JOIN permissions p ON p.id = l.permission_id "
+            "WHERE p.name = 'admin'"
+        )[0][0] == 0
+
+    def test_new_permissions_need_no_migration(self, alembic_cfg):
+        command.upgrade(alembic_cfg, "005")
+        app_id = uuid.uuid4()
+        sql("INSERT INTO applications (id, slug, name) VALUES (:id, 'financas', 'Finanças')", id=app_id)
+        sql("INSERT INTO permissions (name, application_id) VALUES ('ai', :a), ('read', :a)", a=app_id)
+
+        with pytest.raises(IntegrityError):
+            sql("INSERT INTO permissions (name, application_id) VALUES ('read', :a)", a=app_id)
+
+    def test_deleting_an_application_removes_its_grants(self, alembic_cfg):
+        command.upgrade(alembic_cfg, "005")
+        app_id, uid = uuid.uuid4(), uuid.uuid4()
+        sql("INSERT INTO applications (id, slug, name) VALUES (:id, 'financas', 'F')", id=app_id)
+        perm = sql(
+            "INSERT INTO permissions (name, application_id) VALUES ('read', :a) RETURNING id", a=app_id
+        )[0][0]
+        sql("INSERT INTO users (id, username, password_hash) VALUES (:id, 'u', 'x')", id=uid)
+        sql("INSERT INTO user_permissions (user_id, permission_id) VALUES (:u, :p)", u=uid, p=perm)
+
+        sql("DELETE FROM applications WHERE id = :id", id=app_id)
+
+        assert user_permissions(uid) == set()
+
+    def test_granted_by_is_cleared_when_the_granter_is_deleted(self, alembic_cfg):
+        command.upgrade(alembic_cfg, "005")
+        admin, user = uuid.uuid4(), uuid.uuid4()
+        for uid, name in ((admin, "admin"), (user, "user")):
+            sql("INSERT INTO users (id, username, password_hash) VALUES (:id, :n, 'x')", id=uid, n=name)
+        sql(
+            "INSERT INTO user_permissions (user_id, permission_id, granted_by) "
+            "SELECT :u, id, :a FROM permissions WHERE name = 'ai'",
+            u=user, a=admin,
+        )
+
+        sql("DELETE FROM users WHERE id = :id", id=admin)
+
+        assert sql("SELECT granted_by FROM user_permissions WHERE user_id = :u", u=user) == [(None,)]
+
+
+class TestDowngrade005:
+    def test_trem_grants_survive_and_the_rest_is_dropped(self, alembic_cfg):
+        command.upgrade(alembic_cfg, "005")
+        uid, app_id = uuid.uuid4(), uuid.uuid4()
+        sql("INSERT INTO users (id, username, password_hash) VALUES (:id, 'u', 'x')", id=uid)
+        sql("INSERT INTO applications (id, slug, name) VALUES (:id, 'financas', 'F')", id=app_id)
+        sql("INSERT INTO permissions (name, application_id) VALUES ('read', :a)", a=app_id)
+        sql(
+            "INSERT INTO user_permissions (user_id, permission_id) "
+            "SELECT :u, id FROM permissions WHERE name IN ('ai', 'admin', 'read')",
+            u=uid,
+        )
+
+        command.downgrade(alembic_cfg, "004")
+
+        assert user_profiles(uid) == {"ai"}
+        assert {r[0] for r in sql("SELECT name FROM profiles")} == ALL_PROFILES
+        with pytest.raises(IntegrityError):
+            sql("INSERT INTO profiles (name) VALUES ('admin')")
 
 
 class TestAppOnMigratedSchema:
-    """The ORM no longer maps profile_id: these run the real repositories on the migrated tables."""
+    """The ORM does not map profile_id: these run the real repositories on the migrated tables."""
 
     def run(self, coro_factory):
         async def go():
@@ -228,7 +332,7 @@ class TestAppOnMigratedSchema:
 
         return asyncio.run(go())
 
-    def test_repositories_read_and_write_profile_sets(self, alembic_cfg):
+    def test_repositories_read_and_write_permission_sets(self, alembic_cfg):
         from app.domain.schemas.user import UserCreate
         from app.repositories.user_repository import UserRepository
         from app.services.api_client_service import ApiClientService
@@ -241,21 +345,24 @@ class TestAppOnMigratedSchema:
         async def scenario(session):
             existing = await UserRepository(session).get_by_username("editor")
             created = await UserService(session).create_user(
-                UserCreate(username="scraper", profile_names=["ai", "linkedin_scraper"])
+                UserCreate(username="scraper", permissions=["trem:ai", "trem:linkedin_scraper"])
             )
             sql_status = "UPDATE users SET status = 'active' WHERE username = 'scraper'"
             await session.execute(text(sql_status))
             service = ApiClientService(session)
             client, raw_key = await service.create_client(
-                name="scraper-key", profile_names=["linkedin_scraper"], user_id=created.id
+                name="scraper-key", permissions=["trem:linkedin_scraper"], user_id=created.id
             )
             authenticated = await service.authenticate(raw_key)
             return existing, created, client, authenticated
 
         existing, created, client, authenticated = self.run(scenario)
 
-        assert set(existing.profile_names) == ALL_PROFILES
-        assert created.profile_names == ["ai", "linkedin_scraper"]
+        assert set(existing.permissions) == {f"trem:{p}" for p in ALL_PROFILES}
+        assert created.permissions == ["trem:ai", "trem:linkedin_scraper"]
         assert client.user_id == created.id
-        assert authenticated.profile_names == ["linkedin_scraper"]
-        assert legacy_profile("users", uuid.UUID(existing.id)) == "file_editor"
+        assert authenticated.permissions == ["trem:linkedin_scraper"]
+        assert sql(
+            "SELECT p.name FROM users t JOIN permissions p ON p.id = t.profile_id WHERE t.id = :id",
+            id=uuid.UUID(existing.id),
+        )[0][0] == "file_editor"

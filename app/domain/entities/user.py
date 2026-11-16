@@ -23,7 +23,7 @@ class User:
     username: str
     email: Optional[str]
     password_hash: str
-    profile_names: list[str]
+    permissions: list[str]  # keys "<application>:<permission>"
     status: str  # UserStatus
     must_change_password: bool
     provisional_password_sent_at: Optional[datetime]
@@ -48,11 +48,11 @@ class User:
         """Só contas ativas podem obter tokens."""
         return self.is_active
 
-    def has_profile(self, profile_name: str) -> bool:
-        return profile_name in self.profile_names
+    def has_permission(self, key: str) -> bool:
+        return key in self.permissions
 
     def __repr__(self) -> str:  # nunca exponha o password_hash em log/traceback
         return (
             f"User(id={self.id!r}, username={self.username!r}, "
-            f"profiles={self.profile_names!r}, status={self.status!r})"
+            f"permissions={self.permissions!r}, status={self.status!r})"
         )

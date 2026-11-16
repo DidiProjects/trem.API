@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.interfaces.i_user_repository import IUserRepository
 from app.domain.entities.user import User
-from app.infrastructure.database.models import ProfileModel, RefreshTokenModel, UserModel
+from app.infrastructure.database.models import PermissionModel, RefreshTokenModel, UserModel
 from app.repositories.base import BaseRepository
 
 
@@ -32,7 +32,7 @@ def _to_entity(orm: UserModel) -> User:
         username=orm.username,
         email=orm.email,
         password_hash=orm.password_hash,
-        profile_names=sorted(p.name for p in orm.profiles),
+        permissions=sorted(p.key for p in orm.permissions),
         status=orm.status,
         must_change_password=orm.must_change_password,
         provisional_password_sent_at=orm.provisional_password_sent_at,
@@ -70,14 +70,18 @@ class UserRepository(BaseRepository, IUserRepository):
         self,
         username: str,
         password_hash: str,
-        profile_ids: list[str],
+        permission_ids: list[str],
         email: Optional[str] = None,
     ) -> User:
+        ids = [i for i in (_as_uuid(p) for p in permission_ids) if i]
+        permissions = (
+            await self._session.execute(select(PermissionModel).where(PermissionModel.id.in_(ids)))
+        ).scalars().all()
         orm = UserModel(
             username=username,
             email=email,
             password_hash=password_hash,
-            profiles=await self.get_profiles_by_ids(profile_ids),
+            permissions=list(permissions),
         )
         self._session.add(orm)
         await self._session.flush()
@@ -177,22 +181,3 @@ class UserRepository(BaseRepository, IUserRepository):
             .where(RefreshTokenModel.user_id == _as_uuid(user_id))
             .values(revoked=True)
         )
-
-    async def get_profile_by_name(self, name: str) -> Optional[ProfileModel]:
-        result = await self._session.execute(
-            select(ProfileModel).where(ProfileModel.name == name)
-        )
-        return result.scalar_one_or_none()
-
-    async def get_profiles_by_names(self, names: list[str]) -> list[ProfileModel]:
-        result = await self._session.execute(
-            select(ProfileModel).where(ProfileModel.name.in_(names))
-        )
-        return list(result.scalars().all())
-
-    async def get_profiles_by_ids(self, profile_ids: list[str]) -> list[ProfileModel]:
-        ids = [_as_uuid(p) for p in profile_ids]
-        result = await self._session.execute(
-            select(ProfileModel).where(ProfileModel.id.in_([i for i in ids if i]))
-        )
-        return list(result.scalars().all())

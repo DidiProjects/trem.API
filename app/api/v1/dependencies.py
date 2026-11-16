@@ -11,6 +11,7 @@ from app.core.exceptions import (
 )
 from app.core.security import decode_token
 from app.domain.entities.api_client import Principal
+from app.domain.entities.permission import split_permission_key
 from app.domain.entities.user import User
 from app.infrastructure.database.connection import get_db
 from app.repositories.user_repository import UserRepository
@@ -103,7 +104,7 @@ async def get_current_principal(
 
     A API key é checada primeiro por ser o caminho majoritário hoje. O
     resultado é normalizado em Principal para que as rotas — e o
-    require_profile — não precisem saber qual foi usada.
+    require_permission — não precisem saber qual foi usada.
     """
     if api_key:
         client = await ApiClientService(db).authenticate(api_key)
@@ -129,16 +130,18 @@ async def get_current_principal(
     )
 
 
-def require_profile(profile_name: str) -> Callable:
+def require_permission(key: str) -> Callable:
     """
-    Factory: exige um perfil específico, seja o chamador usuário ou cliente.
+    Factory: exige uma permissão "<aplicação>:<permissão>", seja o chamador usuário ou cliente.
 
-    O perfil vem sempre do banco (registro do usuário ou do cliente), nunca de
+    A permissão vem sempre do banco (registro do usuário ou do cliente), nunca de
     algo que o chamador possa forjar no request — nem do claim do JWT, que
     poderia estar defasado em relação ao banco.
     """
+    split_permission_key(key)
+
     async def _check(principal: Principal = Depends(get_current_principal)) -> Principal:
-        if not principal.has_profile(profile_name):
+        if not principal.has_permission(key):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Permissão insuficiente para este recurso",

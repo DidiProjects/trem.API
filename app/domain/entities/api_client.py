@@ -27,7 +27,7 @@ class ApiClient:
     id: str
     name: str
     description: Optional[str]
-    profile_names: list[str]
+    permissions: list[str]
     revoked: bool
     last_used_at: Optional[datetime]
     created_at: datetime
@@ -41,7 +41,7 @@ class ApiClient:
     def __repr__(self) -> str:  # nunca inclua key_hash aqui
         return (
             f"ApiClient(id={self.id!r}, name={self.name!r}, "
-            f"profiles={self.profile_names!r}, revoked={self.revoked!r})"
+            f"permissions={self.permissions!r}, revoked={self.revoked!r})"
         )
 
 
@@ -49,13 +49,13 @@ class ApiClient:
 class Principal:
     """
     Identidade normalizada de quem chamou, seja usuário (JWT) ou cliente
-    (API key). É o que `require_profile` inspeciona, para que as rotas não
+    (API key). É o que `require_permission` inspeciona, para que as rotas não
     precisem saber qual das duas autenticações foi usada.
     """
 
     id: str
     display_name: str
-    profile_names: frozenset[str]
+    permissions: frozenset[str]
     kind: PrincipalKind
     # Só se aplica a usuários; cliente nunca tem senha para trocar.
     must_change_password: bool = False
@@ -72,15 +72,15 @@ class Principal:
     def is_client(self) -> bool:
         return self.kind == PrincipalKind.CLIENT
 
-    def has_profile(self, profile_name: str) -> bool:
-        return profile_name in self.profile_names
+    def has_permission(self, key: str) -> bool:
+        return key in self.permissions
 
     @classmethod
     def from_user(cls, user) -> "Principal":
         return cls(
             id=user.id,
             display_name=user.username,
-            profile_names=frozenset(user.profile_names),
+            permissions=frozenset(user.permissions),
             kind=PrincipalKind.USER,
             must_change_password=user.must_change_password,
             user_id=user.id,
@@ -91,7 +91,7 @@ class Principal:
         return cls(
             id=client.id,
             display_name=client.name,
-            profile_names=frozenset(client.profile_names),
+            permissions=frozenset(client.permissions),
             kind=PrincipalKind.CLIENT,
             must_change_password=False,
             user_id=client.user_id,

@@ -7,7 +7,8 @@ import httpx
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Path, Query, Request, UploadFile, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
-from app.api.v1.dependencies import require_profile
+from app.api.v1.dependencies import require_permission
+from app.domain.entities.permission import TremPermission
 from app.core.config import get_settings
 from app.domain.entities.api_client import Principal
 from app.infrastructure.http.scraper_client import ScraperApiError, ScraperClient, relay
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-linkedin_scraper = require_profile("linkedin_scraper")
+linkedin_scraper = require_permission(TremPermission.LINKEDIN_SCRAPER)
 
 # Orchestrator job and login ids are uuid4 hex. Checked here so nothing but an id reaches its URL path.
 JobId = Path(pattern=r"^[0-9a-f]{32}$")

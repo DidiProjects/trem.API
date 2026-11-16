@@ -29,7 +29,7 @@ async def create_client(
     try:
         client, raw_key = await service.create_client(
             name=body.name,
-            profile_names=[p.value for p in body.profile_names],
+            permissions=body.permissions,
             description=body.description,
             user_id=body.user_id,
         )

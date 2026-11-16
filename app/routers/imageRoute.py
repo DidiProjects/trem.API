@@ -6,7 +6,8 @@ import os
 import io
 import base64
 from typing import List
-from app.api.v1.dependencies import require_profile
+from app.api.v1.dependencies import require_permission
+from app.domain.entities.permission import TremPermission
 from app.domain.entities.api_client import Principal
 from app.services.imageService import (
     images_to_pdf,
@@ -35,7 +36,7 @@ async def images_to_pdf_endpoint(
     files: List[UploadFile] = File(...),
     layout: str = Form("single"),
     images_per_page: int = Form(4),
-    _: Principal = Depends(require_profile("file_editor"))
+    _: Principal = Depends(require_permission(TremPermission.FILE_EDITOR))
 ):
     if not files:
         raise HTTPException(status_code=400, detail="Nenhum arquivo enviado")
@@ -74,7 +75,7 @@ async def convert_image_endpoint(
     file: UploadFile = File(...),
     format: str = Form(...),
     quality: int = Form(95),
-    _: Principal = Depends(require_profile("file_editor"))
+    _: Principal = Depends(require_permission(TremPermission.FILE_EDITOR))
 ):
     try:
         validate_image_file(file.filename)
@@ -121,7 +122,7 @@ async def compress_image_endpoint(
     quality: int = Form(70),
     max_dimension: int = Form(None),
     response_type: str = Form("file"),
-    _: Principal = Depends(require_profile("file_editor"))
+    _: Principal = Depends(require_permission(TremPermission.FILE_EDITOR))
 ):
     """
     Comprime uma imagem.
@@ -197,7 +198,7 @@ async def compress_image_info_endpoint(
     quality: int = Form(70),
     max_dimension: int = Form(None),
     include_file: bool = Form(False),
-    _: Principal = Depends(require_profile("file_editor"))
+    _: Principal = Depends(require_permission(TremPermission.FILE_EDITOR))
 ):
     """
     Retorna métricas de compressão em JSON.

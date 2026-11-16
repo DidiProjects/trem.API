@@ -59,7 +59,7 @@ class AuthService:
         access_token = create_access_token(
             user_id=user.id,
             username=user.username,
-            profiles=user.profile_names,
+            permissions=user.permissions,
             must_change_password=user.must_change_password,
         )
         raw_refresh, _ = create_refresh_token(user.id)
@@ -107,7 +107,7 @@ class AuthService:
         access_token = create_access_token(
             user_id=user.id,
             username=user.username,
-            profiles=user.profile_names,
+            permissions=user.permissions,
             must_change_password=user.must_change_password,
         )
         return AccessTokenResponse(access_token=access_token)

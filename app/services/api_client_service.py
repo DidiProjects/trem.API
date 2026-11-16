@@ -5,13 +5,14 @@ from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import AppException
+from app.core.exceptions import AppException, UnknownPermissionsError
 from app.domain.entities.api_client import (
     API_KEY_ENTROPY_BYTES,
     API_KEY_PREFIX,
     ApiClient,
 )
 from app.repositories.api_client_repository import ApiClientRepository
+from app.repositories.permission_repository import PermissionRepository
 from app.repositories.user_repository import UserRepository
 
 
@@ -52,11 +53,12 @@ class ApiClientService:
     def __init__(self, session: AsyncSession):
         self._repo = ApiClientRepository(session)
         self._users = UserRepository(session)
+        self._permissions = PermissionRepository(session)
 
     async def create_client(
         self,
         name: str,
-        profile_names: list[str],
+        permissions: list[str],
         description: Optional[str] = None,
         user_id: Optional[str] = None,
     ) -> tuple[ApiClient, str]:
@@ -69,27 +71,27 @@ class ApiClientService:
         if await self._repo.get_by_name(name):
             raise ApiClientAlreadyExistsError(name)
 
-        profiles = await self._users.get_profiles_by_names(profile_names)
-        missing = set(profile_names) - {p.name for p in profiles}
+        found = await self._permissions.get_by_keys(permissions)
+        missing = set(permissions) - {p.key for p in found}
         if missing:
-            raise AppException(f"Perfis não encontrados: {', '.join(sorted(missing))}", 400)
+            raise UnknownPermissionsError(missing)
 
         if user_id is not None:
             owner = await self._users.get_by_id(user_id)
             if not owner:
                 raise AppException("Usuário dono da chave não encontrado", 400)
             # A chave nunca dá ao dono acesso que ele não tem pelo próprio login.
-            beyond = set(profile_names) - set(owner.profile_names)
+            beyond = set(permissions) - set(owner.permissions)
             if beyond:
                 raise AppException(
-                    f"Perfis fora dos do usuário dono: {', '.join(sorted(beyond))}", 400
+                    f"Permissões fora das do usuário dono: {', '.join(sorted(beyond))}", 400
                 )
 
         raw_key = generate_api_key()
         client = await self._repo.create(
             name=name,
             key_hash=hash_api_key(raw_key),
-            profile_ids=[str(p.id) for p in profiles],
+            permission_ids=[str(p.id) for p in found],
             description=description,
             user_id=user_id,
         )
@@ -110,12 +112,12 @@ class ApiClientService:
             return None
 
         if client.user_id is not None:
-            # Revalidado a cada request: bloquear o dono ou tirar um perfil
+            # Revalidado a cada request: bloquear o dono ou tirar uma permissão
             # dele vale na hora para as chaves dele, sem revogar uma a uma.
             owner = await self._users.get_by_id(client.user_id)
             if not owner or not owner.is_active:
                 return None
-            client.profile_names = sorted(set(client.profile_names) & set(owner.profile_names))
+            client.permissions = sorted(set(client.permissions) & set(owner.permissions))
 
         await self._repo.touch_last_used(client.id, datetime.now(timezone.utc))
         return client
