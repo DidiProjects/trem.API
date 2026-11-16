@@ -2,7 +2,7 @@
 
 ## Visão Geral
 
-trem.API é uma plataforma de processamento de arquivos com identidade própria, autenticação segura, controle de perfis e capacidade de integração com serviços externos na mesma rede Docker.
+trem.API é uma plataforma de processamento de arquivos com identidade própria, autenticação segura, permissões por aplicação e capacidade de integração com serviços externos na mesma rede Docker.
 
 ---
 
@@ -38,7 +38,7 @@ app/
 │   │   │   ├── audio.py
 │   │   │   ├── image.py
 │   │   │   └── support.py
-│   │   └── dependencies.py      # get_current_user, require_profile, get_db
+│   │   └── dependencies.py      # get_current_user, require_permission, get_db
 │   └── middleware/
 │       ├── body_size_limit.py   # 413 em JSON por prefixo; o proxy não limita corpo
 │       ├── rate_limit.py
@@ -55,7 +55,7 @@ app/
 ├── domain/
 │   ├── entities/
 │   │   ├── user.py              # Entidade User (pura, sem ORM)
-│   │   └── profile.py
+│   │   └── permission.py        # Application, Permission, TremPermission
 │   └── schemas/
 │       ├── auth.py              # LoginRequest, TokenResponse
 │       ├── user.py              # UserCreate, UserResponse
@@ -110,12 +110,23 @@ scripts/
 ### Schema
 
 ```sql
--- Perfis de acesso
-CREATE TABLE profiles (
+-- Interfaces que autenticam pela trem.API; o slug é o audience do token
+CREATE TABLE applications (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name        VARCHAR(50) UNIQUE NOT NULL,
+    slug        VARCHAR(50) UNIQUE NOT NULL,
+    name        VARCHAR(100) NOT NULL,
     description TEXT,
     created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Permissões de cada aplicação; a chave pública é "<slug>:<name>", ex: trem:ai
+CREATE TABLE permissions (
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    application_id UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+    name           VARCHAR(50) NOT NULL,
+    description    TEXT,
+    created_at     TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (application_id, name)
 );
 
 -- Usuários
@@ -132,16 +143,19 @@ CREATE TABLE users (
     last_login_at                TIMESTAMPTZ
 );
 
--- Perfis de cada usuário e de cada chave: um conjunto, não um só
-CREATE TABLE user_profiles (
-    user_id    UUID REFERENCES users(id) ON DELETE CASCADE,
-    profile_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
-    PRIMARY KEY (user_id, profile_id)
+-- Permissões de cada usuário e de cada chave: um conjunto
+CREATE TABLE user_permissions (
+    user_id       UUID REFERENCES users(id) ON DELETE CASCADE,
+    permission_id UUID REFERENCES permissions(id) ON DELETE CASCADE,
+    granted_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    granted_by    UUID REFERENCES users(id) ON DELETE SET NULL,
+    PRIMARY KEY (user_id, permission_id)
 );
-CREATE TABLE api_client_profiles (
-    client_id  UUID REFERENCES api_clients(id) ON DELETE CASCADE,
-    profile_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
-    PRIMARY KEY (client_id, profile_id)
+CREATE TABLE api_client_permissions (
+    client_id     UUID REFERENCES api_clients(id) ON DELETE CASCADE,
+    permission_id UUID REFERENCES permissions(id) ON DELETE CASCADE,
+    granted_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (client_id, permission_id)
 );
 -- api_clients.user_id: dono da chave (NULL = chave de serviço), ON DELETE CASCADE
 
@@ -160,27 +174,34 @@ CREATE TABLE refresh_tokens (
 
 ### Dados iniciais (seed via Alembic)
 
-```sql
-INSERT INTO profiles (name, description) VALUES
-  ('file_editor',      'Acesso aos serviços de manipulação de arquivos'),
-  ('airline_company',  'Acesso a informações de empresas aéreas'),
-  ('ai',               'Acesso ao modelo de linguagem (/llm)'),          -- 004
-  ('linkedin_scraper', 'Acesso aos jobs de scraping do LinkedIn');      -- 004
-```
+Aplicação `trem` (esta API), com as permissões:
+
+| Chave | Acesso |
+|-------|--------|
+| `trem:file_editor` | Manipulação de arquivos |
+| `trem:airline_company` | Informações de empresas aéreas |
+| `trem:ai` | Modelo de linguagem (`/llm`) |
+| `trem:linkedin_scraper` | Jobs de scraping do LinkedIn |
+| `trem:admin` | Administração (005); concedida a ninguém pela migration |
 
 A migration 004 trocou o perfil único (`profile_id`) pelo conjunto: todo usuário
 existente recebeu todos os perfis, e toda chave existente manteve o seu e ganhou
-`ai` (antes dela o `/llm` aceitava qualquer chave). `users.profile_id` e
-`api_clients.profile_id` continuam no banco, opcionais e sem uso pelo código, para
-o downgrade devolver o perfil exato de cada linha; saem numa migration posterior.
+`ai` (antes dela o `/llm` aceitava qualquer chave). A 005 transformou os perfis,
+antes um enum travado por CHECK, em permissões da aplicação `trem`, sem mudar nenhum
+acesso: aplicação ou permissão nova é um registro, não uma migration.
+`users.profile_id` e `api_clients.profile_id` continuam no banco, opcionais e sem uso
+pelo código, para o downgrade da 004 devolver o perfil exato de cada linha.
 
 ### Status possíveis de usuário
 
 | Status      | Significado                                      |
 |-------------|--------------------------------------------------|
-| `blocked`   | Padrão no cadastro. Admin deve habilitar         |
+| `pending_verification` | Cadastro próprio, e-mail ainda não confirmado |
+| `pending_approval` | E-mail confirmado, aguardando o administrador |
+| `blocked`   | Padrão na criação pelo admin. Admin deve habilitar |
 | `active`    | Acesso liberado                                  |
 | `suspended` | Suspensão manual pelo administrador              |
+| `rejected`  | Cadastro recusado pelo administrador             |
 
 ---
 
@@ -188,24 +209,56 @@ o downgrade devolver o perfil exato de cada linha; saem numa migration posterior
 
 A API é consumida por **aplicações** (outras APIs, scripts, o playground) e,
 futuramente, por **usuários humanos** num front-end. Os dois obtêm credenciais
-de formas diferentes, mas passam pela mesma checagem de perfil.
+de formas diferentes, mas passam pela mesma checagem de permissão.
 
 | Chamador | Credencial | Header |
 |----------|-----------|--------|
 | Aplicação | API key por cliente | `X-API-Key: trem_...` |
 | Usuário | JWT RS256 | `Authorization: Bearer ...` |
-| Administrador | master key | `X-API-Key: <API_KEY>` |
+| Administrador | JWT com `trem:admin` e `amr` contendo `otp` | `Authorization: Bearer ...` |
 
 As duas primeiras são normalizadas em um `Principal` (`app/domain/entities/api_client.py`),
-que é o que `require_profile()` inspeciona. As rotas não sabem — nem precisam
+que é o que `require_permission()` inspeciona. As rotas não sabem — nem precisam
 saber — qual esquema foi usado.
 
-A **master key** (`settings.API_KEY`) é a exceção: serve só para administrar
-credenciais em `/admin/clients` e `/users`. Ela não autentica rotas de negócio.
+A administração (`/admin/*`, `/users`) exige uma **pessoa**: login JWT de quem tem
+`trem:admin`, feito com segundo fator (TOTP). Uma senha vazada ou uma API key não
+chegam lá. A antiga master key (`API_KEY`) não administra mais nada.
+
+### Segundo fator (TOTP)
+
+- RFC 6238 (SHA-1, 6 dígitos, 30 s, um passo de tolerância), implementado em
+  `app/core/totp.py` e conferido contra os vetores da RFC.
+- Segredo de 160 bits cifrado com AES-256-GCM (`MFA_ENCRYPTION_KEY`, fora do banco), com
+  o id do usuário como dado associado: copiado para outra conta, não decifra.
+- O último passo aceito fica gravado (`totp_last_step`): o mesmo código não entra duas
+  vezes, nem em corrida (`UPDATE ... WHERE totp_last_step < :step`).
+- 10 códigos de recuperação de uso único, SHA-256 no banco, mostrados só na criação.
+- Tentativas limitadas por conta (`MFA_MAX_ATTEMPTS` por `MFA_WINDOW_SECONDS`).
+- Cadastrar, regenerar códigos ou desativar pede a senha de novo; desativar encerra
+  todas as sessões.
+
+Login com TOTP ativo é em dois passos:
+
+```
+POST /auth/login       → {"mfa_required": true, "mfa_token": "..."}   (5 min, não abre rota nenhuma)
+POST /auth/mfa/verify  {"mfa_token", "code" | "recovery_code", "session"} → tokens, amr ["pwd","otp"]
+```
+
+O `amr` fica no refresh token e passa para os tokens renovados.
+
+### Primeiro admin
+
+```bash
+docker exec -it trem-api python -m scripts.bootstrap_admin diego --email voce@example.com
+```
+
+Cria a conta ativa com `trem:admin` e senha provisória (mostrada uma vez), ou promove uma
+conta existente. Depois: trocar a senha, cadastrar o TOTP e entrar de novo com o código.
 
 ### API keys por cliente
 
-Cada aplicação consumidora tem a sua chave, com perfis e revogação próprios
+Cada aplicação consumidora tem a sua chave, com permissões e revogação próprias
 (tabela `api_clients`). Isso substitui a chave única compartilhada, que não
 permitia revogar um consumidor sem derrubar todos nem saber quem chamou o quê.
 
@@ -215,19 +268,37 @@ permitia revogar um consumidor sem derrubar todos nem saber quem chamou o quê.
   cliente por índice em vez de varrer a tabela a cada request
 - Devolvida em claro **uma única vez**, na criação
 - `last_used_at` registra o uso, para auditoria e detecção de chaves esquecidas
-- Pode ter um **dono** (`user_id`). Os perfis da chave precisam estar entre os do
-  dono na criação, e a cada request valem só os que o dono ainda tem: bloquear o
-  usuário ou tirar um perfil dele vale na hora para as chaves dele. O `Principal`
+- Pode ter um **dono** (`user_id`). As permissões da chave precisam estar entre as do
+  dono na criação, e a cada request valem só as que o dono ainda tem: bloquear o
+  usuário ou tirar uma permissão dele vale na hora para as chaves dele. O `Principal`
   carrega o `user_id`, que é a quem pertencem os recursos pessoais (jobs de
   scraping), para sobreviverem à rotação da chave. Sem dono é chave de serviço
 
 ```bash
 # Bootstrap (primeiro cliente, antes de existir chave para chamar a API)
-python -m scripts.manage_api_clients create flight-api --profile airline_company
-python -m scripts.manage_api_clients create diego-ai --profile ai --profile linkedin_scraper --user diego
+python -m scripts.manage_api_clients create files-app --permission trem:file_editor
+python -m scripts.manage_api_clients create diego-ai --permission trem:ai --permission trem:linkedin_scraper --user diego
 python -m scripts.manage_api_clients list
 python -m scripts.manage_api_clients revoke <client_id>
 ```
+
+### Chaves do próprio usuário (`/me/api-keys`)
+
+Quem está logado (JWT; uma chave não cria chaves) gerencia as próprias:
+
+| Método | Path | Descrição |
+|--------|------|-----------|
+| GET    | `/me` | Perfil, permissões, TOTP, quantas chaves ativas |
+| GET    | `/me/api-keys` | Lista, sem a chave: só `key_hint` (`trem_xxxx`) |
+| POST   | `/me/api-keys` | `{name, permissions?}` → a chave completa, só nesta resposta |
+| DELETE | `/me/api-keys/{id}` | Revoga |
+
+- No máximo **5 chaves ativas** por usuário; revogar libera a vaga e o nome.
+- Permissões: subconjunto das `trem:*` do dono, nunca `trem:admin` (admin exige pessoa
+  com segundo fator). Sem `permissions`, a chave leva todas as `trem:*` do dono.
+- O nome é único entre as chaves ativas do mesmo dono (migration 009); dois usuários
+  podem ter uma chave "notebook".
+- Chave de outro usuário responde 404, igual a uma que não existe.
 
 ### Precedência
 
@@ -246,7 +317,7 @@ velho deixado pelo browser derrubaria com 401 uma chamada legítima por chave.
 | Hash de senha   | **Argon2id**       | Vencedor do PHC, recomendado pelo OWASP             |
 | Algoritmo JWT   | **RS256**          | Assimétrico: outros serviços verificam sem a chave privada |
 | Biblioteca JWT  | **PyJWT**          | Mantida ativamente, RS256 completo; substituiu python-jose (semi-abandonada, CVE-2024-33663/33664) |
-| Hash de refresh token | SHA-256 | Token raw não fica no banco                    |
+| Refresh token   | 256 bits opacos, SHA-256 no banco | Rotação a cada uso, com detecção de reuso |
 
 ### Parâmetros Argon2id (OWASP recomendado)
 
@@ -258,12 +329,16 @@ parallelism  = 4 threads
 
 ### Estrutura dos tokens
 
-**Access token (15 min):**
+**Access token (15 min)**, emitido para uma aplicação (`aud`), com header `kid`:
 ```json
 {
+  "iss": "https://api.didilv93.com",
+  "aud": "trem",
   "sub": "uuid-do-usuario",
+  "jti": "id-unico",
   "username": "nome_usuario",
-  "profiles": ["ai", "file_editor"],
+  "perms": ["trem:ai", "trem:file_editor"],
+  "amr": ["pwd"],
   "must_change_password": false,
   "iat": 1234567890,
   "exp": 1234567890,
@@ -271,18 +346,145 @@ parallelism  = 4 threads
 }
 ```
 
-**Refresh token (7 dias):**
-```json
-{
-  "sub": "uuid-do-usuario",
-  "jti": "uuid-unico-do-token",
-  "iat": 1234567890,
-  "exp": 1234567890,
-  "type": "refresh"
-}
-```
+`perms` traz só as permissões daquela aplicação: um token emitido para `financas`
+não abre a trem.API (o `aud` é conferido) nem revela o que o usuário tem em outras.
+
+**Refresh token (7 dias):** opaco, 256 bits aleatórios. O banco guarda só o SHA-256.
+
+- **Rotação**: cada `/auth/refresh` devolve um par novo e revoga o token usado, que
+  passa a apontar para o sucessor (`replaced_by`). Os tokens de um mesmo login
+  dividem a `family_id`.
+- **Detecção de reuso**: um token já trocado que volta a ser usado significa que
+  alguém tem uma cópia. A família inteira é revogada, inclusive o token mais novo
+  do dono legítimo, que precisa logar de novo. Dois refreshes simultâneos com o
+  mesmo token contam como reuso (o "claim" é um `UPDATE ... WHERE revoked = false`).
+- **Ligado à aplicação**: o refresh só emite tokens para a aplicação do login. Perder
+  todas as permissões nela, ou ser bloqueado, encerra o login no próximo refresh.
+- **Logout** encerra o login inteiro (a família), não só o token apresentado.
+
+### Verificação por outras aplicações (JWKS)
+
+`GET /.well-known/jwks.json` publica a chave pública de assinatura. Outra aplicação
+valida o token localmente, sem chamar a trem.API: assinatura RS256 pela chave do
+`kid`, `iss` igual ao da trem.API, `aud` igual ao próprio slug, `exp`. O `kid` é o
+thumbprint RFC 7638 da chave.
+
+Troca de chave sem derrubar ninguém: a chave antiga vai para `JWT_EXTRA_PUBLIC_KEYS`
+(separadas por `|||`) enquanto seus tokens vivem (15 min), e sai depois.
+
+### Sessão do navegador
+
+Com `"session": "cookie"` no login, o refresh vai num cookie `trem_refresh`
+`HttpOnly; Secure; SameSite=Strict; Path=/auth`, fora do alcance do JavaScript, e
+o access token fica só em memória. `/auth/refresh` e `/auth/logout` sem corpo leem
+o cookie e exigem o header `X-Requested-With: trem`: um formulário de outro site
+não envia header próprio, e um `fetch` de outra origem que envie é barrado no preflight.
+
+Sem `session`, o refresh volta no corpo (aplicações, scripts, outros fronts).
+
+### Página (`/`)
+
+`app/static/account.js` cuida da sessão e da aba Account; `script.js` faz todas as
+chamadas por `authFetch`. A API key digitada no campo tem prioridade sobre o login (quem
+cola uma chave logado quer testar aquela chave); sem chave, vai o Bearer da sessão, e um
+401 da sessão dispara um refresh e uma nova tentativa. A aba Account usa `sessionFetch`,
+sempre com o login: `/me` e `/auth` não aceitam API key. Ao lado do campo, a página diz
+qual credencial está em uso.
+
+- A API key fica só no campo: não é gravada em `localStorage` nem `sessionStorage`, e
+  some ao recarregar. A cópia que versões anteriores deixavam no `localStorage` é apagada
+  ao carregar.
+
+- Access token só em memória; refresh no cookie HttpOnly (`session: "cookie"`). Uma flag
+  sem segredo no `localStorage` diz se vale tentar restaurar a sessão ao carregar.
+- Refreshes serializados entre abas com Web Locks: duas abas reapresentando o mesmo
+  cookie disparariam a detecção de reuso e encerrariam o login. Logout é avisado às
+  outras abas por `BroadcastChannel`.
+- Links de confirmação (`#verify-email=`) e de redefinição de senha (`#reset-password=`)
+  saem da barra de endereço e do histórico ao carregar; o de redefinição fica só em
+  memória até a senha nova ser enviada.
+- Chave nova e códigos de recuperação aparecem num diálogo que é esvaziado ao fechar.
+- O segredo TOTP aparece como texto e link `otpauth:`, sem QR code: nenhum script de
+  terceiros numa página que manipula segredos.
+
+### Sessão do banco
+
+`get_db` é sempre `Depends(get_db, scope="function")`: o commit acontece antes de a
+resposta sair. No escopo padrão do FastAPI 0.141 ("request") ele rodava depois, e um
+cliente que agia logo após um 2xx podia não encontrar o dado gravado.
+
+### Limite de tentativas de login
+
+Em memória (processo único), janela deslizante de `LOGIN_FAILURE_WINDOW_SECONDS` (15 min):
+`LOGIN_MAX_FAILURES_PER_USERNAME` (5) por username e `LOGIN_MAX_FAILURES_PER_IP` (20) por IP.
+Acima disso, 429 com `Retry-After`. O username conta mesmo quando não existe, para o
+bloqueio não revelar quais contas existem; pelo mesmo motivo, login de usuário
+inexistente roda uma verificação Argon2id contra um hash descartável e leva o mesmo
+tempo que uma senha errada. O IP vem de `CF-Connecting-IP`, que o Cloudflare
+sobrescreve; o primeiro item do `X-Forwarded-For` é escolhido pelo cliente.
 
 ---
+
+## Cadastro pelo próprio usuário
+
+```
+1. POST /auth/register {username, email, password}
+   → conta pending_verification, sem permissões; resposta 202 sempre igual
+   → e-mail com link {API_URL}/#verify-email=<token> (256 bits, uso único, 24 h)
+
+2. POST /auth/verify-email {token}
+   → status pending_approval, email_verified_at preenchido
+   → e-mail para os admins (usuários ativos com trem:admin) e para ADMIN_EMAIL
+     (ou EMAIL_RECIPIENT), que cobre o tempo antes de existir o primeiro admin
+
+3. Admin aprova e define as permissões (API de admin)
+```
+
+- **Sem enumeração**: e-mail ou username já usados recebem a mesma resposta 202. Quem
+  fica sabendo é só o dono do e-mail digitado, por e-mail. A senha é hasheada antes de
+  qualquer consulta, e os e-mails saem numa background task depois da resposta, então
+  o tempo também não muda.
+- **Token no fragmento** (`#`): não vai para log do nginx nem para o `Referer`.
+- **Cadastro abandonado** (não confirmado em `EMAIL_TOKEN_TTL_HOURS`) não segura o
+  username nem o e-mail: um novo cadastro apaga a conta pendente.
+- **Reenvio**: `POST /auth/resend-verification {email}` invalida os links anteriores.
+- **Limites**: `SIGNUP_MAX_PER_IP` (5) cadastros por IP por `SIGNUP_WINDOW_SECONDS` (1 h);
+  o reenvio conta por IP e por e-mail. `SIGNUP_ENABLED=false` fecha o cadastro.
+- **Login** de conta pendente diz o motivo (e-mail não confirmado, aguardando
+  aprovação) só depois da senha certa.
+- **Senha**: mínimo 12, máximo 128, sem regra de composição (NIST SP 800-63B); não pode
+  conter o username nem o e-mail, nem ser quase toda o mesmo caractere. Vale também
+  para a troca de senha.
+- **Senha vazada**: cadastro, troca e redefinição consultam o Have I Been Pwned pela API
+  de range (k-anonimidade): sai do servidor só o prefixo de 5 caracteres do SHA-1, com
+  `Add-Padding`, e a comparação do sufixo é local. Achou, 422. Se o serviço não responde
+  em `PWNED_PASSWORDS_TIMEOUT` (3 s), a senha é aceita: uma queda de terceiro não trava
+  cadastro nem redefinição. `PWNED_PASSWORDS_ENABLED=false` desliga. Na troca, a consulta
+  só acontece depois de a senha atual ser conferida.
+
+## Esqueci a senha
+
+```
+1. POST /auth/forgot-password {email}
+   → 202 sempre igual; só conta active recebe o link
+   → e-mail com link {API_URL}/#reset-password=<token> (256 bits, uso único, 60 min)
+
+2. POST /auth/reset-password {token, new_password}
+   → senha trocada, must_change_password=False
+   → todos os refresh tokens revogados, bloqueio de login zerado
+   → e-mail avisando o dono da conta
+```
+
+- Mesma tabela `email_tokens` do cadastro, `purpose='reset_password'`. Um pedido novo
+  invalida os links anteriores.
+- Conta pendente, suspensa, recusada ou bloqueada não recebe link: a pendente tem o
+  próprio link de confirmação, e as outras dependem do admin.
+- A política de senha (inclusive username e e-mail da conta) é checada **antes** de
+  gastar o token: senha recusada não queima o link.
+- **TOTP continua valendo**: o e-mail prova a caixa de entrada, não o segundo fator.
+- Limite: o mesmo `SIGNUP_MAX_PER_IP` por `SIGNUP_WINDOW_SECONDS`, contado por IP e por
+  e-mail. `PASSWORD_RESET_TTL_MINUTES` (60) controla a validade.
+- API keys do usuário continuam ativas: elas têm revogação própria em `/me/api-keys`.
 
 ## Fluxo Completo de Cadastro e Primeiro Acesso
 
@@ -316,7 +518,7 @@ parallelism  = 4 threads
    → revoga todos os refresh_tokens anteriores
    → emite novos tokens
 
-7. Usuário acessa endpoints conforme perfil
+7. Usuário acessa endpoints conforme as permissões
 ```
 
 ---
@@ -327,25 +529,57 @@ parallelism  = 4 threads
 
 | Método | Path                    | Auth       | Descrição                        |
 |--------|-------------------------|------------|----------------------------------|
-| POST   | `/auth/login`           | Público    | Login, retorna par de tokens     |
-| POST   | `/auth/refresh`         | Bearer     | Renova access token              |
+| POST   | `/auth/login`           | Público    | Login; `audience` (padrão `trem`) e `session` (`body` ou `cookie`) |
+| POST   | `/auth/refresh`         | Refresh    | Novo par de tokens (corpo ou cookie + `X-Requested-With`) |
 | POST   | `/auth/change-password` | Bearer     | Altera senha (obrigatório no 1º acesso) |
-| POST   | `/auth/logout`          | Bearer     | Revoga refresh token             |
+| POST   | `/auth/logout`          | Refresh    | Encerra o login (corpo ou cookie + `X-Requested-With`) |
+| GET    | `/.well-known/jwks.json`| Público    | Chaves públicas para validar os tokens |
 
 ### Users (`/users`) — Admin
 
 | Método | Path                                     | Auth     | Descrição                       |
 |--------|------------------------------------------|----------|---------------------------------|
-| POST   | `/users`                                 | API Key  | Cria novo usuário               |
-| GET    | `/users`                                 | API Key  | Lista usuários (paginado)       |
-| GET    | `/users/{id}`                            | API Key  | Detalha usuário                 |
-| POST   | `/users/{id}/send-provisional-password`  | API Key  | Envia senha provisória por email|
+| POST   | `/users`                                 | Admin    | Cria novo usuário               |
+| GET    | `/users`                                 | Admin    | Lista usuários (paginado)       |
+| GET    | `/users/{id}`                            | Admin    | Detalha usuário                 |
+| POST   | `/users/{id}/send-provisional-password`  | Admin    | Envia senha provisória por email|
 
-`POST /users` recebe `profile_names` (lista, ao menos um). `POST /admin/clients`
-recebe `profile_names` e, opcionalmente, `user_id` do dono. O antigo
-`profile_name` (um só) responde 422.
+### Administração (`/admin`) — admin com TOTP
 
-### Arquivos — autenticados via JWT + perfil `file_editor`
+| Método | Path | Descrição |
+|--------|------|-----------|
+| GET    | `/admin/users?status=pending_approval` | Lista, com filtro de status |
+| GET    | `/admin/users/{id}` | Detalha |
+| POST   | `/admin/users/{id}/approve` | `{"permissions": [...]}`: ativa com exatamente essas |
+| POST   | `/admin/users/{id}/reject` | Recusa o cadastro |
+| POST   | `/admin/users/{id}/suspend` | Bloqueia, encerra sessões, para as API keys do dono |
+| POST   | `/admin/users/{id}/reactivate` | Volta de suspensa para ativa |
+| PUT    | `/admin/users/{id}/permissions` | Substitui o conjunto e encerra as sessões |
+| GET/POST | `/admin/applications` | Lista (com permissões) / cria `{slug, name}` |
+| DELETE | `/admin/applications/{slug}` | Remove, com permissões, concessões e sessões |
+| POST   | `/admin/applications/{slug}/permissions` | Cria `{name}` |
+| DELETE | `/admin/applications/{slug}/permissions/{name}` | Remove |
+
+Proteções: o admin não muda o estado da própria conta nem tira o próprio `trem:admin`;
+a aplicação `trem` e suas permissões (usadas pelo código) não podem ser removidas.
+Trocar permissões encerra as sessões porque os access tokens carregam as permissões
+que as outras aplicações leem; os já emitidos valem até expirar (15 min).
+
+### MFA (`/auth/mfa`) — usuário logado
+
+| Método | Path | Descrição |
+|--------|------|-----------|
+| POST | `/auth/mfa/enroll` | `{password}` → `{secret, otpauth_uri}` (ainda inativo) |
+| POST | `/auth/mfa/confirm` | `{code}` → ativa e devolve os códigos de recuperação |
+| POST | `/auth/mfa/recovery-codes` | `{password, code}` → novo conjunto |
+| POST | `/auth/mfa/disable` | `{password, code}` → desativa e encerra as sessões |
+| POST | `/auth/mfa/verify` | Segundo passo do login |
+
+`POST /users` recebe `permissions` (lista de chaves `<aplicação>:<permissão>`, ao menos
+uma). `POST /admin/clients` recebe `permissions` e, opcionalmente, `user_id` do dono.
+Os antigos `profile_name` e `profile_names` respondem 422.
+
+### Arquivos — permissão `trem:file_editor`
 
 | Método | Path                  |
 |--------|-----------------------|
@@ -359,13 +593,13 @@ recebe `profile_names` e, opcionalmente, `user_id` do dono. O antigo
 | POST   | `/audio/*`            |
 | POST   | `/image/*`            |
 
-### Aéreas — autenticados via JWT + perfil `airline_company`
+### Aéreas — permissão `trem:airline_company`
 
 | Método | Path            | Descrição                              |
 |--------|-----------------|----------------------------------------|
 | GET    | `/airline/*`    | Proxy para API aérea na rede Docker    |
 
-### LLM — perfil `ai`
+### LLM — permissão `trem:ai`
 
 | Método | Path                         | Descrição                                   |
 |--------|------------------------------|---------------------------------------------|
@@ -405,7 +639,7 @@ fala com `http://trem-llm:8080` usando `LLM_API_KEY`; nada do chamador é repass
   usuário digita, e retoma o polling de respostas pendentes após recarregar a página.
   O histórico fica só no `localStorage` do navegador.
 
-### Scrapers — perfil `linkedin_scraper`
+### Scrapers — permissão `trem:linkedin_scraper`
 
 | Método | Path | Descrição |
 |--------|------|-----------|
@@ -455,24 +689,19 @@ partes de 50 MB e o resultado é consultado depois (`app/services/transcriptionS
 
 ---
 
-## Controle de Perfis
+## Controle de Permissões
 
 ```python
-# Uso nos routers via Depends
 @router.post("/pdf/split")
 async def split_pdf(
     ...,
-    user: User = Depends(require_profile("file_editor"))
-):
-    ...
-
-@router.get("/airline/flights")
-async def get_flights(
-    ...,
-    user: User = Depends(require_profile("airline_company"))
+    _: Principal = Depends(require_permission(TremPermission.FILE_EDITOR))
 ):
     ...
 ```
+
+A permissão vem do banco a cada request, nunca do token: tirar uma permissão vale
+na hora, sem esperar o access token expirar.
 
 ---
 
@@ -562,7 +791,7 @@ JWT_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"
 | 3    | PostgreSQL: modelos ORM + Alembic + primeira migration            | ✅     |
 | 4    | Autenticação: Argon2id + JWT RS256 + fluxo completo              | ✅     |
 | 5    | CRUD de usuários + fluxo de senha provisória                     | ✅     |
-| 6    | Migrar routers existentes para JWT + perfis                      | ✅     |
+| 6    | Migrar routers existentes para JWT + permissões                  | ✅     |
 | 7    | Cliente HTTP para API aérea                                       | ✅     |
 | 8    | Docker Compose com postgres, adminer e rede compartilhada        | ✅     |
 | 9    | Testes e CI/CD                                                    | 🔲     |

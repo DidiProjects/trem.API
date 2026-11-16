@@ -1,7 +1,7 @@
 """
 Testes dos endpoints de gestão de usuários: /users/*
 
-Endpoints admin protegidos por X-API-Key (verify_api_key).
+Endpoints admin protegidos por require_admin (login de admin com segundo fator).
 UserService é mockado para isolar da camada de banco de dados.
 """
 from datetime import datetime, timezone
@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from app.auth_secure import verify_api_key
+from app.api.v1.dependencies import require_admin
 from app.core.exceptions import UserAlreadyExistsError, UserNotFoundError, AppException
 from app.domain.entities.user import User
 from app.infrastructure.database.connection import get_db
@@ -20,7 +20,7 @@ from tests.conftest import mock_get_db
 
 def _make_user(
     username: str = "testuser",
-    profile_names: tuple[str, ...] = ("file_editor",),
+    permissions: tuple[str, ...] = ("trem:file_editor",),
     status: str = "blocked",
     email: str = "test@example.com",
 ) -> User:
@@ -29,7 +29,7 @@ def _make_user(
         username=username,
         email=email,
         password_hash="$argon2id$placeholder",
-        profile_names=list(profile_names),
+        permissions=list(permissions),
         status=status,
         must_change_password=True,
         provisional_password_sent_at=None,
@@ -39,14 +39,14 @@ def _make_user(
     )
 
 
-async def _mock_api_key():
-    return "test-api-key"
+async def _mock_admin():
+    return _make_user(username="chefe", permissions=("trem:admin",), status="active")
 
 
 @pytest.fixture
 def admin_client():
-    """Client com API key válida para endpoints admin."""
-    app.dependency_overrides[verify_api_key] = _mock_api_key
+    """Client autenticado como admin."""
+    app.dependency_overrides[require_admin] = _mock_admin
     app.dependency_overrides[get_db] = mock_get_db
     yield TestClient(app)
     app.dependency_overrides.clear()
@@ -73,7 +73,7 @@ class TestCreateUser:
                 json={
                     "username": "novousuario",
                     "email": "novo@example.com",
-                    "profile_names": ["file_editor"],
+                    "permissions": ["trem:file_editor"],
                 },
             )
         assert response.status_code == 201
@@ -90,7 +90,7 @@ class TestCreateUser:
                 json={
                     "username": "existente",
                     "email": "existente@example.com",
-                    "profile_names": ["file_editor"],
+                    "permissions": ["trem:file_editor"],
                 },
             )
         assert response.status_code == 409
@@ -101,7 +101,7 @@ class TestCreateUser:
             json={
                 "username": "usuario",
                 "email": "usuario@example.com",
-                "profile_names": ["perfil_invalido"],
+                "permissions": ["perfil_invalido"],
             },
         )
         assert response.status_code == 422
@@ -109,7 +109,7 @@ class TestCreateUser:
     def test_create_user_short_username(self, admin_client):
         response = admin_client.post(
             "/users",
-            json={"username": "ab", "profile_names": ["file_editor"]},
+            json={"username": "ab", "permissions": ["trem:file_editor"]},
         )
         assert response.status_code == 422
 
@@ -119,7 +119,7 @@ class TestCreateUser:
             json={
                 "username": "usuario",
                 "email": "nao-e-email",
-                "profile_names": ["file_editor"],
+                "permissions": ["trem:file_editor"],
             },
         )
         assert response.status_code == 422
@@ -127,38 +127,38 @@ class TestCreateUser:
     def test_create_user_no_api_key(self, no_auth_client):
         response = no_auth_client.post(
             "/users",
-            json={"username": "usuario", "profile_names": ["file_editor"]},
+            json={"username": "usuario", "permissions": ["trem:file_editor"]},
         )
         assert response.status_code == 401
 
     def test_create_airline_company_user(self, admin_client):
         with patch("app.api.v1.routers.users.UserService") as Mock:
             Mock.return_value.create_user = AsyncMock(
-                return_value=_make_user(profile_names=("airline_company",))
+                return_value=_make_user(permissions=("trem:airline_company",))
             )
             response = admin_client.post(
                 "/users",
-                json={"username": "aerolinea", "profile_names": ["airline_company"]},
+                json={"username": "aerolinea", "permissions": ["trem:airline_company"]},
             )
         assert response.status_code == 201
-        assert response.json()["profile_names"] == ["airline_company"]
+        assert response.json()["permissions"] == ["trem:airline_company"]
 
     def test_create_user_with_several_profiles(self, admin_client):
         with patch("app.api.v1.routers.users.UserService") as Mock:
             Mock.return_value.create_user = AsyncMock(
-                return_value=_make_user(profile_names=("ai", "linkedin_scraper"))
+                return_value=_make_user(permissions=("trem:ai", "trem:linkedin_scraper"))
             )
             response = admin_client.post(
                 "/users",
-                json={"username": "scraper", "profile_names": ["linkedin_scraper", "ai"]},
+                json={"username": "scraper", "permissions": ["trem:linkedin_scraper", "trem:ai"]},
             )
         assert response.status_code == 201
-        assert response.json()["profile_names"] == ["ai", "linkedin_scraper"]
+        assert response.json()["permissions"] == ["trem:ai", "trem:linkedin_scraper"]
         sent = Mock.return_value.create_user.await_args.args[0]
-        assert sent.profile_names == ["ai", "linkedin_scraper"]
+        assert sent.permissions == ["trem:ai", "trem:linkedin_scraper"]
 
     def test_create_user_without_profiles_is_422(self, admin_client):
-        response = admin_client.post("/users", json={"username": "usuario", "profile_names": []})
+        response = admin_client.post("/users", json={"username": "usuario", "permissions": []})
         assert response.status_code == 422
 
 

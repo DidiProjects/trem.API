@@ -138,8 +138,8 @@ def orchestrator(monkeypatch, stream, grants):
     app.dependency_overrides.clear()
 
 
-def _principal(profiles=("linkedin_scraper",), user_id=OWNER):
-    return Principal(id="k", display_name="k", profile_names=frozenset(profiles),
+def _principal(permissions=("trem:linkedin_scraper",), user_id=OWNER):
+    return Principal(id="k", display_name="k", permissions=frozenset(permissions),
                      kind=PrincipalKind.CLIENT, user_id=user_id)
 
 
@@ -179,7 +179,7 @@ class TestStartLogin:
 
     def test_requires_the_scraper_profile_and_an_owner(self, orchestrator):
         app.dependency_overrides[get_db] = mock_get_db
-        for principal in (_principal(("ai",)), _principal(user_id=None)):
+        for principal in (_principal(("trem:ai",)), _principal(user_id=None)):
             app.dependency_overrides[get_current_principal] = lambda p=principal: p
             assert TestClient(app).post(f"{PREFIX}/session/login").status_code == 403
         assert orchestrator.requests == []

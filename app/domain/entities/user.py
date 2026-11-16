@@ -15,6 +15,10 @@ class UserStatus(StrEnum):
     BLOCKED = "blocked"
     ACTIVE = "active"
     SUSPENDED = "suspended"
+    # Self sign-up: the e-mail is confirmed first, then an admin approves the account.
+    PENDING_VERIFICATION = "pending_verification"
+    PENDING_APPROVAL = "pending_approval"
+    REJECTED = "rejected"
 
 
 @dataclass
@@ -23,13 +27,23 @@ class User:
     username: str
     email: Optional[str]
     password_hash: str
-    profile_names: list[str]
+    permissions: list[str]  # keys "<application>:<permission>"
     status: str  # UserStatus
     must_change_password: bool
     provisional_password_sent_at: Optional[datetime]
     created_at: datetime
     updated_at: datetime
     last_login_at: Optional[datetime]
+    email_verified_at: Optional[datetime] = None
+    approved_at: Optional[datetime] = None
+    approved_by: Optional[str] = None
+    totp_enabled: bool = False
+    # Filled from the access token that authenticated this request: how the login was proven.
+    amr: tuple[str, ...] = ()
+
+    @property
+    def is_admin(self) -> bool:
+        return "trem:admin" in self.permissions
 
     @property
     def is_active(self) -> bool:
@@ -48,11 +62,11 @@ class User:
         """Só contas ativas podem obter tokens."""
         return self.is_active
 
-    def has_profile(self, profile_name: str) -> bool:
-        return profile_name in self.profile_names
+    def has_permission(self, key: str) -> bool:
+        return key in self.permissions
 
     def __repr__(self) -> str:  # nunca exponha o password_hash em log/traceback
         return (
             f"User(id={self.id!r}, username={self.username!r}, "
-            f"profiles={self.profile_names!r}, status={self.status!r})"
+            f"permissions={self.permissions!r}, status={self.status!r})"
         )

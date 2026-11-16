@@ -9,12 +9,12 @@ import pytest
 
 from app.core.exceptions import AppException, UserAlreadyExistsError, UserNotFoundError
 from app.core.security import verify_password
-from app.domain.entities.profile import ProfileName
+from app.domain.entities.permission import TremPermission
 from app.domain.schemas.user import UserCreate
 from app.services.user_service import UserService
 from tests.conftest import make_mock_user
 
-PROFILE_ID = "00000000-0000-0000-0000-000000000010"
+PERMISSION_ID = "00000000-0000-0000-0000-000000000010"
 
 
 @pytest.fixture
@@ -22,14 +22,20 @@ def repo():
     mock = MagicMock()
     mock.get_by_id = AsyncMock(return_value=None)
     mock.get_by_username = AsyncMock(return_value=None)
-    profile = MagicMock(id=PROFILE_ID)
-    profile.name = ProfileName.FILE_EDITOR.value  # `name=` in the constructor names the mock itself
-    mock.get_profiles_by_names = AsyncMock(return_value=[profile])
     mock.create = AsyncMock(return_value=make_mock_user())
     mock.update_password = AsyncMock()
     mock.set_provisional_password_sent = AsyncMock()
     mock.list_all = AsyncMock(return_value=[])
     mock.count_all = AsyncMock(return_value=0)
+    return mock
+
+
+@pytest.fixture
+def permissions():
+    mock = MagicMock()
+    mock.get_by_keys = AsyncMock(
+        return_value=[MagicMock(id=PERMISSION_ID, key=TremPermission.FILE_EDITOR.value)]
+    )
     return mock
 
 
@@ -41,33 +47,33 @@ def email():
 
 
 @pytest.fixture
-def service(repo, email):
+def service(repo, permissions, email):
     with patch("app.services.user_service.UserRepository", return_value=repo), patch(
-        "app.services.user_service.SmtpEmailClient", return_value=email
-    ):
+        "app.services.user_service.PermissionRepository", return_value=permissions
+    ), patch("app.services.user_service.SmtpEmailClient", return_value=email):
         yield UserService(MagicMock())
 
 
 class TestCreateUser:
     async def test_success_returns_user(self, service, repo):
         data = UserCreate(
-            username="novo", email="novo@example.com", profile_names=["file_editor"]
+            username="novo", email="novo@example.com", permissions=["trem:file_editor"]
         )
         user = await service.create_user(data)
         assert user is not None
         repo.create.assert_awaited_once()
 
-    async def test_resolves_profile_ids_from_names(self, service, repo):
-        data = UserCreate(username="novo", profile_names=["file_editor"])
+    async def test_resolves_permission_ids_from_keys(self, service, repo):
+        data = UserCreate(username="novo", permissions=["trem:file_editor"])
         await service.create_user(data)
-        assert repo.create.await_args.kwargs["profile_ids"] == [PROFILE_ID]
+        assert repo.create.await_args.kwargs["permission_ids"] == [PERMISSION_ID]
 
-    async def test_some_profiles_missing_in_database_raises(self, service, repo):
-        data = UserCreate(username="novo", profile_names=["file_editor", "ai"])
+    async def test_some_permissions_missing_in_database_raises(self, service, repo):
+        data = UserCreate(username="novo", permissions=["trem:file_editor", "trem:ai"])
         with pytest.raises(AppException) as exc:
             await service.create_user(data)
         assert exc.value.status_code == 400
-        assert "ai" in exc.value.message
+        assert "trem:ai" in exc.value.message
         repo.create.assert_not_awaited()
 
     async def test_stores_unusable_placeholder_password(self, service, repo):
@@ -75,7 +81,7 @@ class TestCreateUser:
         A conta nasce sem senha real: o hash gravado não pode validar nenhuma
         senha que o usuário conheça, até o admin enviar a provisória.
         """
-        data = UserCreate(username="novo", profile_names=["file_editor"])
+        data = UserCreate(username="novo", permissions=["trem:file_editor"])
         await service.create_user(data)
 
         placeholder = repo.create.await_args.kwargs["password_hash"]
@@ -85,23 +91,23 @@ class TestCreateUser:
 
     async def test_duplicate_username_raises(self, service, repo):
         repo.get_by_username.return_value = make_mock_user()
-        data = UserCreate(username="existente", profile_names=["file_editor"])
+        data = UserCreate(username="existente", permissions=["trem:file_editor"])
 
         with pytest.raises(UserAlreadyExistsError):
             await service.create_user(data)
 
     async def test_duplicate_username_does_not_create(self, service, repo):
         repo.get_by_username.return_value = make_mock_user()
-        data = UserCreate(username="existente", profile_names=["file_editor"])
+        data = UserCreate(username="existente", permissions=["trem:file_editor"])
 
         with pytest.raises(UserAlreadyExistsError):
             await service.create_user(data)
         repo.create.assert_not_awaited()
 
-    async def test_missing_profile_in_database_raises(self, service, repo):
-        """Perfil válido no schema mas ausente no banco (seed não rodou)."""
-        repo.get_profiles_by_names.return_value = []
-        data = UserCreate(username="novo", profile_names=["file_editor"])
+    async def test_missing_permission_in_database_raises(self, service, permissions):
+        """Chave bem formada, mas sem permissão cadastrada no banco."""
+        permissions.get_by_keys.return_value = []
+        data = UserCreate(username="novo", permissions=["trem:file_editor"])
 
         with pytest.raises(AppException) as exc:
             await service.create_user(data)
@@ -109,7 +115,7 @@ class TestCreateUser:
 
     async def test_passes_email_through(self, service, repo):
         data = UserCreate(
-            username="novo", email="Novo@Example.COM", profile_names=["file_editor"]
+            username="novo", email="Novo@Example.COM", permissions=["trem:file_editor"]
         )
         await service.create_user(data)
         assert repo.create.await_args.kwargs["email"] == "novo@example.com"

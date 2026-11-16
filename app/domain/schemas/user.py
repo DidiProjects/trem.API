@@ -3,7 +3,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
-from app.domain.entities.profile import ProfileName
+from app.domain.entities.permission import split_permission_key
 from app.domain.entities.user import UserStatus
 
 USERNAME_PATTERN = r"^[a-zA-Z0-9_.-]+$"
@@ -19,16 +19,21 @@ class UserCreate(BaseModel):
         description="Letras, números, _, . e -",
     )
     email: Optional[EmailStr] = None
-    profile_names: list[ProfileName] = Field(min_length=1)
+    permissions: list[str] = Field(
+        min_length=1,
+        description="Chaves \"<aplicação>:<permissão>\", ex: trem:ai",
+    )
 
     @field_validator("email")
     @classmethod
     def normalize_email(cls, v: Optional[str]) -> Optional[str]:
         return v.lower() if v else None
 
-    @field_validator("profile_names")
+    @field_validator("permissions")
     @classmethod
-    def dedupe_profiles(cls, v: list[ProfileName]) -> list[ProfileName]:
+    def validate_permissions(cls, v: list[str]) -> list[str]:
+        for key in v:
+            split_permission_key(key)
         return sorted(set(v))
 
 
@@ -39,9 +44,26 @@ class UserResponse(BaseModel):
     id: str
     username: str
     email: Optional[str]
-    profile_names: list[str]
+    permissions: list[str]
     status: UserStatus
     must_change_password: bool
     provisional_password_sent_at: Optional[datetime]
     created_at: datetime
     last_login_at: Optional[datetime]
+    email_verified_at: Optional[datetime] = None
+    approved_at: Optional[datetime] = None
+    approved_by: Optional[str] = None
+    totp_enabled: bool = False
+
+
+class PermissionSet(BaseModel):
+    """The complete set of permissions an account ends up with; may be empty."""
+
+    permissions: list[str] = Field(default_factory=list, description='Chaves "<aplicação>:<permissão>"')
+
+    @field_validator("permissions")
+    @classmethod
+    def validate_permissions(cls, v: list[str]) -> list[str]:
+        for key in v:
+            split_permission_key(key)
+        return sorted(set(v))

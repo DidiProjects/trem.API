@@ -17,12 +17,26 @@
             </div>
         </header>
 
-        <div class="api-key-section">
-            <label for="apiKey">API Key</label>
-            <div class="input-group">
-                <input type="password" id="apiKey" placeholder="Enter your API Key">
-                <button onclick="toggleApiKeyVisibility()" class="btn-icon">👁</button>
+        <div class="account-bar">
+            <div id="accountLoggedOut">
+                <button type="button" id="btnLogin" class="btn-primary">Log in</button>
+                <button type="button" id="btnSignup" class="btn-secondary">Sign up</button>
             </div>
+            <div id="accountLoggedIn" class="hidden">
+                <span class="account-muted">Signed in as</span> <strong id="accountName"></strong>
+                <button type="button" id="btnAccount" class="btn-secondary">Account</button>
+                <button type="button" id="btnLogout" class="btn-secondary">Log out</button>
+            </div>
+        </div>
+
+        <div class="api-key-section" id="apiKeySection">
+            <label for="apiKey" id="apiKeyLabel">Or use an API key</label>
+            <div class="input-group">
+                <input type="password" id="apiKey" placeholder="trem_..." autocomplete="off">
+                <button onclick="toggleApiKeyVisibility()" class="btn-icon" aria-label="Show or hide the key">👁</button>
+                <button type="button" id="apiKeyClear" class="btn-secondary hidden">Clear</button>
+            </div>
+            <p id="credentialStatus" class="credential-status" aria-live="polite"></p>
         </div>
 
         <div class="main-tabs">
@@ -33,6 +47,7 @@
             <button class="main-tab" data-section="ai">AI</button>
             <button class="main-tab" data-section="scrapers">Scrapers</button>
             <button class="main-tab" data-section="others">Others</button>
+            <button class="main-tab hidden" data-section="account">Account</button>
         </div>
 
         <div class="main-tabs-mobile">
@@ -44,6 +59,7 @@
                 <option value="ai">AI</option>
                 <option value="scrapers">Scrapers</option>
                 <option value="others">Others</option>
+                <option value="account" hidden>Account</option>
             </select>
         </div>
 
@@ -1089,6 +1105,183 @@ For specific formats, adjustments may be necessary.</pre>
             </div>
         </div>
 
+        <div class="section-content" id="section-account">
+            <div class="account-card">
+                <h3>Profile</h3>
+                <dl class="account-profile">
+                    <dt>Username</dt><dd id="profileUsername"></dd>
+                    <dt>E-mail</dt><dd id="profileEmail"></dd>
+                    <dt>Permissions</dt><dd id="profilePermissions" class="account-badges"></dd>
+                </dl>
+            </div>
+
+            <div class="account-card">
+                <h3>API keys</h3>
+                <p class="account-muted">Keys for scripts and other programs, sent in the <code>X-API-Key</code> header. <span id="keyCount"></span>.</p>
+                <div class="scr-table">
+                    <table>
+                        <thead><tr><th>Name</th><th>Key</th><th>Permissions</th><th>Created</th><th>Last used</th><th></th></tr></thead>
+                        <tbody id="keyRows"></tbody>
+                    </table>
+                </div>
+                <form id="keyCreateForm" class="api-form">
+                    <div class="form-group">
+                        <label for="keyName">Name</label>
+                        <input type="text" id="keyName" required maxlength="50" pattern="[A-Za-z0-9_.\-]+" placeholder="e.g. notebook, backup-script">
+                    </div>
+                    <div class="form-group">
+                        <label>Permissions</label>
+                        <div id="keyPermissions" class="account-checks"></div>
+                    </div>
+                    <button type="submit" id="keyCreateButton" class="btn-primary">Create key</button>
+                </form>
+                <p id="keyNoPermissions" class="account-muted hidden">Your account has no permission a key could carry yet.</p>
+            </div>
+
+            <div class="account-card">
+                <h3>Two-factor authentication</h3>
+                <div id="mfaOff">
+                    <div id="mfaEnrolStart">
+                        <p class="account-muted">Protect your login with codes from an authenticator app (Google Authenticator, Aegis, 1Password...).</p>
+                        <form id="mfaEnrolForm" class="api-form">
+                            <div class="form-group">
+                                <label for="mfaPassword">Confirm your password</label>
+                                <input type="password" id="mfaPassword" required autocomplete="current-password">
+                            </div>
+                            <button type="submit" class="btn-primary">Set up two-factor</button>
+                        </form>
+                    </div>
+                    <div id="mfaEnrolConfirm" class="hidden">
+                        <p>Add this key to your authenticator app, or <a id="mfaLink">open it in the app</a> on this device:</p>
+                        <pre class="code-block account-secret" id="mfaSecret"></pre>
+                        <form id="mfaConfirmForm" class="api-form">
+                            <div class="form-group">
+                                <label for="mfaConfirmCode">Code shown by the app</label>
+                                <input type="text" id="mfaConfirmCode" required inputmode="numeric" pattern="\d{6}" maxlength="6" autocomplete="one-time-code">
+                            </div>
+                            <button type="submit" class="btn-primary">Turn on</button>
+                            <button type="button" id="mfaCancel" class="btn-secondary">Cancel</button>
+                        </form>
+                    </div>
+                </div>
+                <div id="mfaOn" class="hidden">
+                    <p><span class="scr-badge ok">on</span> Recovery codes left: <strong id="mfaRecoveryLeft"></strong></p>
+                    <form id="mfaCodesForm" class="api-form">
+                        <h4>New recovery codes</h4>
+                        <div class="form-group"><label>Password</label><input type="password" name="password" required autocomplete="current-password"></div>
+                        <div class="form-group"><label>Code from the app</label><input type="text" name="code" required inputmode="numeric" pattern="\d{6}" maxlength="6" autocomplete="one-time-code"></div>
+                        <button type="submit" class="btn-secondary">Generate new codes</button>
+                    </form>
+                    <form id="mfaDisableForm" class="api-form">
+                        <h4>Turn off</h4>
+                        <div class="form-group"><label>Password</label><input type="password" name="password" required autocomplete="current-password"></div>
+                        <div class="form-group"><label>Code from the app or a recovery code</label><input type="text" name="code" required maxlength="20" autocomplete="one-time-code"></div>
+                        <button type="submit" class="btn-secondary">Turn off two-factor</button>
+                    </form>
+                </div>
+            </div>
+
+            <div class="account-card">
+                <h3>Password</h3>
+                <form class="api-form password-form" data-message="passwordMessage">
+                    <div class="form-group"><label>Current password</label><input type="password" name="current" required autocomplete="current-password"></div>
+                    <div class="form-group"><label>New password</label><input type="password" name="next" required minlength="12" maxlength="128" autocomplete="new-password"><small>At least 12 characters. A few unrelated words make a strong one.</small></div>
+                    <div class="form-group"><label>Repeat the new password</label><input type="password" name="confirm" required autocomplete="new-password"></div>
+                    <p id="passwordMessage" class="dialog-message hidden"></p>
+                    <button type="submit" class="btn-primary">Change password</button>
+                </form>
+            </div>
+        </div>
+
+        <dialog id="loginDialog" class="account-dialog">
+            <form id="loginPasswordStep" class="api-form">
+                <h3>Log in</h3>
+                <div class="form-group"><label for="loginUsername">Username</label><input type="text" id="loginUsername" required autocomplete="username"></div>
+                <div class="form-group"><label for="loginPassword">Password</label><input type="password" id="loginPassword" required autocomplete="current-password"></div>
+                <p id="loginError" class="dialog-message hidden"></p>
+                <button type="submit" class="btn-primary">Log in</button>
+                <button type="button" class="btn-secondary" data-close="loginDialog">Cancel</button>
+                <button type="button" class="scr-link" id="btnForgot">Forgot your password?</button>
+                <button type="button" class="scr-link" data-resend>Did not get the confirmation e-mail?</button>
+            </form>
+            <form id="loginMfaStep" class="api-form hidden">
+                <h3>Two-factor code</h3>
+                <div class="form-group">
+                    <label for="loginCode">Code from your app, or a recovery code</label>
+                    <input type="text" id="loginCode" required maxlength="20" autocomplete="one-time-code">
+                </div>
+                <p id="loginMfaError" class="dialog-message hidden"></p>
+                <button type="submit" class="btn-primary">Continue</button>
+                <button type="button" class="btn-secondary" data-close="loginDialog">Cancel</button>
+            </form>
+        </dialog>
+
+        <dialog id="signupDialog" class="account-dialog">
+            <form id="signupForm" class="api-form">
+                <h3>Create an account</h3>
+                <p class="account-muted">After you confirm your e-mail, the administrator reviews the sign-up and chooses what you can access.</p>
+                <div class="form-group"><label for="signupUsername">Username</label><input type="text" id="signupUsername" required minlength="3" maxlength="50" pattern="[A-Za-z0-9_.\-]+" autocomplete="username"><small>Letters, numbers, . _ -</small></div>
+                <div class="form-group"><label for="signupEmail">E-mail</label><input type="email" id="signupEmail" required autocomplete="email"></div>
+                <div class="form-group"><label for="signupPassword">Password</label><input type="password" id="signupPassword" required minlength="12" maxlength="128" autocomplete="new-password"><small>At least 12 characters, without your username or e-mail.</small></div>
+                <div class="form-group"><label for="signupPasswordConfirm">Repeat the password</label><input type="password" id="signupPasswordConfirm" required autocomplete="new-password"></div>
+                <p id="signupMessage" class="dialog-message hidden"></p>
+                <button type="submit" class="btn-primary">Sign up</button>
+                <button type="button" class="btn-secondary" data-close="signupDialog">Cancel</button>
+            </form>
+            <div id="signupDone" class="hidden">
+                <h3>Check your e-mail</h3>
+                <p>If the details are valid, a confirmation link is on its way. It is valid for 24 hours.</p>
+                <button type="button" class="scr-link" data-resend>Send it again</button>
+                <button type="button" class="btn-primary" data-close="signupDialog">OK</button>
+            </div>
+        </dialog>
+
+        <dialog id="passwordDialog" class="account-dialog">
+            <form class="api-form password-form" data-message="passwordDialogMessage">
+                <h3>Choose a new password</h3>
+                <p class="account-muted">Your account uses a temporary password. Choose your own to continue.</p>
+                <div class="form-group"><label>Temporary password</label><input type="password" name="current" required autocomplete="current-password"></div>
+                <div class="form-group"><label>New password</label><input type="password" name="next" required minlength="12" maxlength="128" autocomplete="new-password"></div>
+                <div class="form-group"><label>Repeat the new password</label><input type="password" name="confirm" required autocomplete="new-password"></div>
+                <p id="passwordDialogMessage" class="dialog-message hidden"></p>
+                <button type="submit" class="btn-primary">Save</button>
+            </form>
+        </dialog>
+
+        <dialog id="secretDialog" class="account-dialog">
+            <h3 id="secretTitle"></h3>
+            <p id="secretText" class="account-muted"></p>
+            <pre class="code-block account-secret" id="secretValue"></pre>
+            <button type="button" id="secretCopy" class="btn-primary">Copy</button>
+            <button type="button" class="btn-secondary" data-close="secretDialog">I saved it</button>
+        </dialog>
+
+        <dialog id="forgotDialog" class="account-dialog">
+            <form id="forgotForm" class="api-form">
+                <h3>Reset your password</h3>
+                <p class="account-muted">We will send a link to the e-mail of your account. It works once, within one hour.</p>
+                <div class="form-group"><label for="forgotEmail">E-mail</label><input type="email" id="forgotEmail" required autocomplete="email"></div>
+                <p id="forgotMessage" class="dialog-message hidden"></p>
+                <button type="submit" class="btn-primary">Send link</button>
+                <button type="button" class="btn-secondary" data-close="forgotDialog">Cancel</button>
+            </form>
+        </dialog>
+        <dialog id="resetDialog" class="account-dialog">
+            <form id="resetForm" class="api-form">
+                <h3>Choose a new password</h3>
+                <p class="account-muted">At least 12 characters. Every open session ends when it changes.</p>
+                <div class="form-group"><label for="resetPassword">New password</label><input type="password" id="resetPassword" required minlength="12" maxlength="128" autocomplete="new-password"></div>
+                <div class="form-group"><label for="resetPasswordConfirm">Repeat the new password</label><input type="password" id="resetPasswordConfirm" required autocomplete="new-password"></div>
+                <p id="resetMessage" class="dialog-message hidden"></p>
+                <button type="submit" class="btn-primary">Save password</button>
+                <button type="button" class="btn-secondary" data-close="resetDialog">Cancel</button>
+            </form>
+        </dialog>
+        <dialog id="noticeDialog" class="account-dialog">
+            <p id="noticeText"></p>
+            <button type="button" class="btn-primary" data-close="noticeDialog">OK</button>
+        </dialog>
+
         <div id="loading" class="loading hidden">
             <div class="spinner"></div>
             <p>Processing...</p>
@@ -1097,6 +1290,7 @@ For specific formats, adjustments may be necessary.</pre>
         <div id="toast" class="toast hidden"></div>
     </div>
 
+    <script src="/static/account.js"></script>
     <script src="/static/script.js"></script>
 </body>
 </html>

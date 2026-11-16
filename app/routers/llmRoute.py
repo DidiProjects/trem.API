@@ -10,7 +10,8 @@ from typing import Optional
 from fastapi import APIRouter, Body, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
-from app.api.v1.dependencies import require_profile
+from app.api.v1.dependencies import require_permission
+from app.domain.entities.permission import TremPermission
 from app.core.config import get_settings
 from app.domain.entities.api_client import Principal
 from app.infrastructure.http.llm_client import LlmApiError, LlmClient
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-ai = require_profile("ai")
+ai = require_permission(TremPermission.AI)
 
 
 class LlmQueue:

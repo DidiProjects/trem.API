@@ -7,8 +7,8 @@ qualquer chave válida para chamar /admin/clients. Roda contra o banco
 diretamente, então precisa de DATABASE_URL apontando para o Postgres.
 
 Uso:
-    python -m scripts.manage_api_clients create flight-api --profile airline_company
-    python -m scripts.manage_api_clients create diego-ai --profile ai --profile linkedin_scraper --user diego
+    python -m scripts.manage_api_clients create files-app --permission trem:file_editor
+    python -m scripts.manage_api_clients create diego-ai --permission trem:ai --permission trem:linkedin_scraper --user diego
     python -m scripts.manage_api_clients list
     python -m scripts.manage_api_clients revoke <client_id>
 
@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.config import get_settings
 from app.core.exceptions import AppException
-from app.domain.entities.profile import ProfileName
+from app.domain.entities.permission import split_permission_key
 from app.repositories.user_repository import UserRepository
 from app.services.api_client_service import ApiClientService
 
@@ -47,7 +47,7 @@ async def cmd_create(args) -> int:
             try:
                 client, raw_key = await ApiClientService(session).create_client(
                     name=args.name,
-                    profile_names=args.profile,
+                    permissions=args.permission,
                     description=args.description,
                     user_id=user_id,
                 )
@@ -56,7 +56,7 @@ async def cmd_create(args) -> int:
                 return 1
             await session.commit()
 
-        print(f"cliente criado: {client.name}  (perfis: {', '.join(client.profile_names)})")
+        print(f"cliente criado: {client.name}  (permissões: {', '.join(client.permissions)})")
         print(f"id:      {client.id}")
         print(f"api key: {raw_key}")
         print()
@@ -76,12 +76,12 @@ async def cmd_list(args) -> int:
             print("nenhum cliente cadastrado")
             return 0
 
-        print(f"{'NOME':<24} {'PERFIS':<36} {'STATUS':<10} {'ÚLTIMO USO':<20} ID")
+        print(f"{'NOME':<24} {'PERMISSÕES':<36} {'STATUS':<10} {'ÚLTIMO USO':<20} ID")
         for c in clients:
             status = "revogado" if c.revoked else "ativo"
             last = c.last_used_at.strftime("%Y-%m-%d %H:%M") if c.last_used_at else "nunca"
-            profiles = ",".join(c.profile_names)
-            print(f"{c.name:<24} {profiles:<36} {status:<10} {last:<20} {c.id}")
+            permissions = ",".join(c.permissions)
+            print(f"{c.name:<24} {permissions:<36} {status:<10} {last:<20} {c.id}")
         print(f"\ntotal: {total}")
         return 0
     finally:
@@ -104,6 +104,14 @@ async def cmd_revoke(args) -> int:
         await engine.dispose()
 
 
+def _permission_key(value: str) -> str:
+    try:
+        split_permission_key(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e))
+    return value
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Gestão de clientes de API")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -111,11 +119,11 @@ def main() -> int:
     create = sub.add_parser("create", help="cria um cliente e emite a chave")
     create.add_argument("name", help="identificador, ex: flight-api")
     create.add_argument(
-        "--profile",
+        "--permission",
         required=True,
         action="append",
-        choices=[p.value for p in ProfileName],
-        help="perfil de acesso do cliente; repita para vários",
+        type=_permission_key,
+        help="permissão <aplicação>:<permissão>, ex: trem:ai; repita para várias",
     )
     create.add_argument("--user", default=None, help="username do dono da chave")
     create.add_argument("--description", default=None)

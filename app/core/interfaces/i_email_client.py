@@ -13,6 +13,26 @@ class IEmailClient(ABC):
         ...
 
     @abstractmethod
+    async def send_email_verification(self, to: str, username: str, link: str, ttl_hours: int) -> None:
+        ...
+
+    @abstractmethod
+    async def send_signup_conflict(self, to: str, reason: str, login_url: str) -> None:
+        ...
+
+    @abstractmethod
+    async def send_signup_pending_approval(self, to: str, username: str, email: str, user_id: str) -> None:
+        ...
+
+    @abstractmethod
+    async def send_password_reset(self, to: str, username: str, link: str, ttl_minutes: int) -> None:
+        ...
+
+    @abstractmethod
+    async def send_password_changed(self, to: str, username: str) -> None:
+        ...
+
+    @abstractmethod
     async def send_feedback(
         self,
         feedback_type: str,

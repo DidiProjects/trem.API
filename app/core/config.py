@@ -23,6 +23,43 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "RS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    # `iss` of every token; defaults to API_URL. Other applications check it with the JWKS.
+    JWT_ISSUER: str = ""
+    # Retired public keys still accepted while their tokens expire, separated by "|||".
+    JWT_EXTRA_PUBLIC_KEYS: str = ""
+
+    # Login throttling, in memory (the API already runs as a single process). Counted per
+    # username, existing or not, so a lockout does not reveal which accounts exist.
+    LOGIN_MAX_FAILURES_PER_USERNAME: int = 5
+    LOGIN_MAX_FAILURES_PER_IP: int = 20
+    LOGIN_FAILURE_WINDOW_SECONDS: int = 900
+
+    # TOTP secrets are encrypted with this key (32 bytes, base64url). Without it, MFA is off,
+    # and so is every admin route, which requires a login proven with a second factor.
+    MFA_ENCRYPTION_KEY: str = ""
+    MFA_MAX_ATTEMPTS: int = 5
+    MFA_WINDOW_SECONDS: int = 300
+    MFA_CHALLENGE_MINUTES: int = 5
+
+    # Self sign-up. Admins are the active users with trem:admin; ADMIN_EMAIL (or, unset,
+    # EMAIL_RECIPIENT) is notified too, which covers the time before the first admin exists.
+    SIGNUP_ENABLED: bool = True
+    ADMIN_EMAIL: Optional[str] = None
+    EMAIL_TOKEN_TTL_HOURS: int = 24
+    SIGNUP_MAX_PER_IP: int = 5
+    SIGNUP_WINDOW_SECONDS: int = 3600
+    # A reset link is a password in transit: short-lived, single use, replaced by the next one.
+    PASSWORD_RESET_TTL_MINUTES: int = 60
+
+    # New passwords are checked against Have I Been Pwned; only a 5-character SHA-1 prefix
+    # leaves the server. If the service does not answer in time, the password is accepted.
+    PWNED_PASSWORDS_ENABLED: bool = True
+    PWNED_PASSWORDS_URL: str = "https://api.pwnedpasswords.com"
+    PWNED_PASSWORDS_TIMEOUT: float = 3.0
+
+    # Browser session: the refresh token lives in an HttpOnly cookie scoped to /auth.
+    REFRESH_COOKIE_NAME: str = "trem_refresh"
+    COOKIE_SECURE: bool = True
 
     # PostgreSQL (asyncpg)
     DATABASE_URL: str = "postgresql+asyncpg://trem:trem@localhost:5432/trem"
@@ -76,6 +113,12 @@ class Settings(BaseSettings):
 
     def jwt_public_key_pem(self) -> str:
         return self.JWT_PUBLIC_KEY.replace("\\n", "\n")
+
+    def jwt_extra_public_key_pems(self) -> list[str]:
+        return [k.replace("\\n", "\n") for k in self.JWT_EXTRA_PUBLIC_KEYS.split("|||") if k.strip()]
+
+    def jwt_issuer(self) -> str:
+        return self.JWT_ISSUER or self.API_URL
 
 
 @lru_cache()

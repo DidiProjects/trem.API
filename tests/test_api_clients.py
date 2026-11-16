@@ -1,6 +1,6 @@
 """
 Testes da autenticação por cliente: modelo, repositório, serviço, geração de
-chave e a resolução de Principal usada por require_profile.
+chave e a resolução de Principal usada por require_permission.
 
 O repositório roda contra SQLite real; a autorização roda via HTTP.
 """
@@ -13,14 +13,14 @@ from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 
-from app.api.v1.dependencies import get_current_principal, require_profile
+from app.api.v1.dependencies import get_current_principal, require_permission
 from app.domain.entities.api_client import (
     API_KEY_PREFIX,
     ApiClient,
     Principal,
     PrincipalKind,
 )
-from app.domain.entities.profile import ProfileName
+from app.domain.entities.permission import TremPermission
 from app.infrastructure.database.connection import get_db
 from app.infrastructure.database.models import ApiClientModel
 from app.repositories.api_client_repository import ApiClientRepository
@@ -95,86 +95,97 @@ class TestKeyHashing:
 # ---------------------------------------------------------------------------
 
 class TestApiClientRepository:
-    async def _create(self, repo, seeded_profiles, name="cliente", **kwargs):
+    async def _create(self, repo, seeded_permissions, name="cliente", **kwargs):
         params = {
             "name": name,
             "key_hash": hash_api_key(f"key-{name}"),
-            "profile_ids": [seeded_profiles[ProfileName.FILE_EDITOR.value]],
+            "permission_ids": [seeded_permissions[TremPermission.FILE_EDITOR.value]],
         }
         params.update(kwargs)
         return await repo.create(**params)
 
-    async def test_create_returns_entity(self, repo, seeded_profiles):
-        client = await self._create(repo, seeded_profiles)
+    async def test_create_returns_entity(self, repo, seeded_permissions):
+        client = await self._create(repo, seeded_permissions)
         assert isinstance(client, ApiClient)
         assert client.name == "cliente"
-        assert client.profile_names == [ProfileName.FILE_EDITOR.value]
+        assert client.permissions == [TremPermission.FILE_EDITOR.value]
 
-    async def test_create_defaults_to_active(self, repo, seeded_profiles):
-        client = await self._create(repo, seeded_profiles)
+    async def test_create_defaults_to_active(self, repo, seeded_permissions):
+        client = await self._create(repo, seeded_permissions)
         assert client.revoked is False
         assert client.is_active is True
         assert client.last_used_at is None
 
-    async def test_get_by_key_hash(self, repo, seeded_profiles):
-        await self._create(repo, seeded_profiles, "flight-api")
+    async def test_get_by_key_hash(self, repo, seeded_permissions):
+        await self._create(repo, seeded_permissions, "flight-api")
         found = await repo.get_by_key_hash(hash_api_key("key-flight-api"))
         assert found is not None
         assert found.name == "flight-api"
 
-    async def test_get_by_key_hash_unknown_returns_none(self, repo, seeded_profiles):
+    async def test_get_by_key_hash_unknown_returns_none(self, repo, seeded_permissions):
         assert await repo.get_by_key_hash(hash_api_key("nao-existe")) is None
 
-    async def test_get_by_name(self, repo, seeded_profiles):
-        await self._create(repo, seeded_profiles, "scraping-api")
-        assert (await repo.get_by_name("scraping-api")) is not None
+    async def test_get_active_by_name(self, repo, seeded_permissions):
+        client = await self._create(repo, seeded_permissions, "scraping-api")
+        assert (await repo.get_active_by_name("scraping-api", None)) is not None
+        await repo.revoke(client.id)
+        assert (await repo.get_active_by_name("scraping-api", None)) is None
 
-    async def test_get_by_id_malformed_returns_none(self, repo, seeded_profiles):
+    async def test_revoked_name_can_be_reused(self, repo, seeded_permissions):
+        client = await self._create(repo, seeded_permissions, "reusado")
+        await repo.revoke(client.id)
+        await repo.create(
+            name="reusado",
+            key_hash=hash_api_key("outra-chave"),
+            permission_ids=[seeded_permissions[TremPermission.FILE_EDITOR.value]],
+        )
+
+    async def test_get_by_id_malformed_returns_none(self, repo, seeded_permissions):
         assert await repo.get_by_id("nao-e-uuid") is None
 
-    async def test_revoke(self, repo, seeded_profiles):
-        client = await self._create(repo, seeded_profiles)
+    async def test_revoke(self, repo, seeded_permissions):
+        client = await self._create(repo, seeded_permissions)
         await repo.revoke(client.id)
         assert (await repo.get_by_id(client.id)).revoked is True
 
-    async def test_revoke_does_not_touch_others(self, repo, seeded_profiles):
-        a = await self._create(repo, seeded_profiles, "cliente-a")
-        b = await self._create(repo, seeded_profiles, "cliente-b")
+    async def test_revoke_does_not_touch_others(self, repo, seeded_permissions):
+        a = await self._create(repo, seeded_permissions, "cliente-a")
+        b = await self._create(repo, seeded_permissions, "cliente-b")
         await repo.revoke(a.id)
         assert (await repo.get_by_id(b.id)).revoked is False
 
-    async def test_touch_last_used(self, repo, seeded_profiles):
-        client = await self._create(repo, seeded_profiles)
+    async def test_touch_last_used(self, repo, seeded_permissions):
+        client = await self._create(repo, seeded_permissions)
         await repo.touch_last_used(client.id, datetime.now(timezone.utc))
         assert (await repo.get_by_id(client.id)).last_used_at is not None
 
-    async def test_name_is_unique(self, db_session, repo, seeded_profiles):
-        await self._create(repo, seeded_profiles, "duplicado")
+    async def test_name_is_unique(self, db_session, repo, seeded_permissions):
+        await self._create(repo, seeded_permissions, "duplicado")
         with pytest.raises(IntegrityError):
             await repo.create(
                 name="duplicado",
                 key_hash=hash_api_key("outra-chave"),
-                profile_ids=[seeded_profiles[ProfileName.FILE_EDITOR.value]],
+                permission_ids=[seeded_permissions[TremPermission.FILE_EDITOR.value]],
             )
 
-    async def test_key_hash_is_unique(self, db_session, repo, seeded_profiles):
+    async def test_key_hash_is_unique(self, db_session, repo, seeded_permissions):
         """Duas linhas com o mesmo hash tornariam o lookup ambíguo."""
-        await self._create(repo, seeded_profiles, "cliente-a")
+        await self._create(repo, seeded_permissions, "cliente-a")
         with pytest.raises(IntegrityError):
             await repo.create(
                 name="cliente-b",
                 key_hash=hash_api_key("key-cliente-a"),
-                profile_ids=[seeded_profiles[ProfileName.FILE_EDITOR.value]],
+                permission_ids=[seeded_permissions[TremPermission.FILE_EDITOR.value]],
             )
 
-    async def test_list_and_count(self, repo, seeded_profiles):
+    async def test_list_and_count(self, repo, seeded_permissions):
         for i in range(4):
-            await self._create(repo, seeded_profiles, f"cliente{i}")
+            await self._create(repo, seeded_permissions, f"cliente{i}")
         page = await repo.list_all(limit=2)
         assert len(page) == 2
         assert await repo.count_all() == 4
 
-    async def test_repr_hides_key_hash(self, db_session, seeded_profiles):
+    async def test_repr_hides_key_hash(self, db_session, seeded_permissions):
         orm = ApiClientModel(
             name="secreto",
             key_hash="hash-super-secreto",
@@ -187,84 +198,84 @@ class TestApiClientRepository:
 # ---------------------------------------------------------------------------
 
 class TestApiClientService:
-    async def test_create_returns_client_and_raw_key(self, service, seeded_profiles):
+    async def test_create_returns_client_and_raw_key(self, service, seeded_permissions):
         client, raw_key = await service.create_client(
-            name="flight-api", profile_names=[ProfileName.AIRLINE_COMPANY.value]
+            name="flight-api", permissions=[TremPermission.AIRLINE_COMPANY.value]
         )
         assert client.name == "flight-api"
         assert raw_key.startswith(API_KEY_PREFIX)
 
-    async def test_create_assigns_requested_profile(self, service, seeded_profiles):
+    async def test_create_assigns_requested_profile(self, service, seeded_permissions):
         client, _ = await service.create_client(
-            name="flight-api", profile_names=[ProfileName.AIRLINE_COMPANY.value]
+            name="flight-api", permissions=[TremPermission.AIRLINE_COMPANY.value]
         )
-        assert client.profile_names == [ProfileName.AIRLINE_COMPANY.value]
+        assert client.permissions == [TremPermission.AIRLINE_COMPANY.value]
 
-    async def test_duplicate_name_raises(self, service, seeded_profiles):
-        await service.create_client(name="dup", profile_names=["file_editor"])
+    async def test_duplicate_name_raises(self, service, seeded_permissions):
+        await service.create_client(name="dup", permissions=["trem:file_editor"])
         with pytest.raises(ApiClientAlreadyExistsError):
-            await service.create_client(name="dup", profile_names=["file_editor"])
+            await service.create_client(name="dup", permissions=["trem:file_editor"])
 
-    async def test_unknown_profile_raises(self, service, seeded_profiles):
+    async def test_unknown_profile_raises(self, service, seeded_permissions):
         from app.core.exceptions import AppException
 
         with pytest.raises(AppException):
-            await service.create_client(name="x", profile_names=["inexistente"])
+            await service.create_client(name="x", permissions=["trem:inexistente"])
 
-    async def test_authenticate_accepts_issued_key(self, service, seeded_profiles):
+    async def test_authenticate_accepts_issued_key(self, service, seeded_permissions):
         _, raw_key = await service.create_client(
-            name="playground", profile_names=["file_editor"]
+            name="playground", permissions=["trem:file_editor"]
         )
         client = await service.authenticate(raw_key)
         assert client is not None
         assert client.name == "playground"
 
-    async def test_authenticate_rejects_unknown_key(self, service, seeded_profiles):
+    async def test_authenticate_rejects_unknown_key(self, service, seeded_permissions):
         assert await service.authenticate(generate_api_key()) is None
 
-    async def test_authenticate_rejects_empty_key(self, service, seeded_profiles):
+    async def test_authenticate_rejects_empty_key(self, service, seeded_permissions):
         assert await service.authenticate("") is None
 
-    async def test_authenticate_rejects_revoked_key(self, service, seeded_profiles):
+    async def test_authenticate_rejects_revoked_key(self, service, seeded_permissions):
         client, raw_key = await service.create_client(
-            name="antigo", profile_names=["file_editor"]
+            name="antigo", permissions=["trem:file_editor"]
         )
         await service.revoke_client(client.id)
         assert await service.authenticate(raw_key) is None
 
-    async def test_authenticate_records_last_used(self, service, seeded_profiles):
+    async def test_authenticate_records_last_used(self, service, seeded_permissions):
         client, raw_key = await service.create_client(
-            name="usado", profile_names=["file_editor"]
+            name="usado", permissions=["trem:file_editor"]
         )
         assert client.last_used_at is None
 
         await service.authenticate(raw_key)
         assert (await service.get_client(client.id)).last_used_at is not None
 
-    async def test_raw_key_is_not_recoverable(self, service, seeded_profiles):
+    async def test_raw_key_is_not_recoverable(self, service, seeded_permissions):
         """A chave em claro só existe no retorno da criação."""
         client, raw_key = await service.create_client(
-            name="efemera", profile_names=["file_editor"]
+            name="efemera", permissions=["trem:file_editor"]
         )
         stored = await service.get_client(client.id)
         assert raw_key not in str(stored.__dict__)
 
-    async def test_each_client_gets_a_different_key(self, service, seeded_profiles):
-        _, key_a = await service.create_client(name="a", profile_names=["file_editor"])
-        _, key_b = await service.create_client(name="b", profile_names=["file_editor"])
+    async def test_each_client_gets_a_different_key(self, service, seeded_permissions):
+        _, key_a = await service.create_client(name="a", permissions=["trem:file_editor"])
+        _, key_b = await service.create_client(name="b", permissions=["trem:file_editor"])
         assert key_a != key_b
 
-    async def test_revoke_unknown_raises(self, service, seeded_profiles):
+    async def test_revoke_unknown_raises(self, service, seeded_permissions):
         with pytest.raises(ApiClientNotFoundError):
             await service.revoke_client(str(uuid.uuid4()))
 
-    async def test_get_unknown_raises(self, service, seeded_profiles):
+    async def test_get_unknown_raises(self, service, seeded_permissions):
         with pytest.raises(ApiClientNotFoundError):
             await service.get_client(str(uuid.uuid4()))
 
-    async def test_list_returns_page_and_total(self, service, seeded_profiles):
+    async def test_list_returns_page_and_total(self, service, seeded_permissions):
         for i in range(3):
-            await service.create_client(name=f"c{i}", profile_names=["file_editor"])
+            await service.create_client(name=f"c{i}", permissions=["trem:file_editor"])
         clients, total = await service.list_clients(limit=2)
         assert len(clients) == 2
         assert total == 3
@@ -273,14 +284,14 @@ class TestApiClientService:
 class TestApiClientProfileSets:
     """Several profiles per key, and keys owned by a user."""
 
-    async def _owner(self, db_session, seeded_profiles, *names, status="active"):
-        from app.infrastructure.database.models import ProfileModel, UserModel
+    async def _owner(self, db_session, seeded_permissions, *names, status="active"):
+        from app.infrastructure.database.models import PermissionModel, UserModel
 
-        profiles = [await db_session.get(ProfileModel, uuid.UUID(seeded_profiles[n])) for n in names]
+        profiles = [await db_session.get(PermissionModel, uuid.UUID(seeded_permissions[n])) for n in names]
         orm = UserModel(
             username=f"owner-{uuid.uuid4().hex[:6]}",
             password_hash="x",
-            profiles=profiles,
+            permissions=profiles,
             status=status,
             must_change_password=False,
         )
@@ -288,52 +299,52 @@ class TestApiClientProfileSets:
         await db_session.flush()
         return orm
 
-    async def test_key_with_several_profiles(self, service, seeded_profiles):
+    async def test_key_with_several_profiles(self, service, seeded_permissions):
         client, _ = await service.create_client(
-            name="multi", profile_names=["file_editor", "ai"]
+            name="multi", permissions=["trem:file_editor", "trem:ai"]
         )
-        assert client.profile_names == ["ai", "file_editor"]
+        assert client.permissions == ["trem:ai", "trem:file_editor"]
 
-    async def test_service_key_has_no_owner(self, service, seeded_profiles):
-        client, raw_key = await service.create_client(name="svc", profile_names=["ai"])
+    async def test_service_key_has_no_owner(self, service, seeded_permissions):
+        client, raw_key = await service.create_client(name="svc", permissions=["trem:ai"])
         assert client.user_id is None
-        assert (await service.authenticate(raw_key)).profile_names == ["ai"]
+        assert (await service.authenticate(raw_key)).permissions == ["trem:ai"]
 
-    async def test_owned_key_within_owner_profiles(self, db_session, service, seeded_profiles):
-        owner = await self._owner(db_session, seeded_profiles, "ai", "linkedin_scraper")
+    async def test_owned_key_within_owner_profiles(self, db_session, service, seeded_permissions):
+        owner = await self._owner(db_session, seeded_permissions, "trem:ai", "trem:linkedin_scraper")
         client, _ = await service.create_client(
-            name="mine", profile_names=["linkedin_scraper"], user_id=str(owner.id)
+            name="mine", permissions=["trem:linkedin_scraper"], user_id=str(owner.id)
         )
         assert client.user_id == str(owner.id)
-        assert client.profile_names == ["linkedin_scraper"]
+        assert client.permissions == ["trem:linkedin_scraper"]
 
-    async def test_key_cannot_exceed_owner_profiles(self, db_session, service, seeded_profiles):
-        owner = await self._owner(db_session, seeded_profiles, "ai")
+    async def test_key_cannot_exceed_owner_profiles(self, db_session, service, seeded_permissions):
+        owner = await self._owner(db_session, seeded_permissions, "trem:ai")
         with pytest.raises(Exception) as exc:
             await service.create_client(
-                name="escalate", profile_names=["ai", "file_editor"], user_id=str(owner.id)
+                name="escalate", permissions=["trem:ai", "trem:file_editor"], user_id=str(owner.id)
             )
         assert exc.value.status_code == 400
-        assert "file_editor" in exc.value.message
-        assert await service._repo.get_by_name("escalate") is None
+        assert "trem:file_editor" in exc.value.message
+        assert await service._repo.get_active_by_name("escalate", str(owner.id)) is None
 
-    async def test_unknown_owner_is_rejected(self, service, seeded_profiles):
+    async def test_unknown_owner_is_rejected(self, service, seeded_permissions):
         with pytest.raises(Exception) as exc:
             await service.create_client(
-                name="orphan", profile_names=["ai"], user_id=str(uuid.uuid4())
+                name="orphan", permissions=["trem:ai"], user_id=str(uuid.uuid4())
             )
         assert exc.value.status_code == 400
 
-    async def test_some_unknown_profiles_are_named(self, service, seeded_profiles):
+    async def test_some_unknown_permissions_are_named(self, service, seeded_permissions):
         with pytest.raises(Exception) as exc:
-            await service.create_client(name="x", profile_names=["ai", "root", "admin"])
+            await service.create_client(name="x", permissions=["trem:ai", "trem:root", "outra:ai"])
         assert exc.value.status_code == 400
-        assert "admin, root" in exc.value.message
+        assert "outra:ai, trem:root" in exc.value.message
 
-    async def test_blocked_owner_disables_their_keys(self, db_session, service, seeded_profiles):
-        owner = await self._owner(db_session, seeded_profiles, "ai")
+    async def test_blocked_owner_disables_their_keys(self, db_session, service, seeded_permissions):
+        owner = await self._owner(db_session, seeded_permissions, "trem:ai")
         _, raw_key = await service.create_client(
-            name="k", profile_names=["ai"], user_id=str(owner.id)
+            name="k", permissions=["trem:ai"], user_id=str(owner.id)
         )
         assert await service.authenticate(raw_key) is not None
 
@@ -343,22 +354,22 @@ class TestApiClientProfileSets:
         assert await service.authenticate(raw_key) is None
 
     async def test_profile_removed_from_owner_leaves_the_key_at_once(
-        self, db_session, service, seeded_profiles
+        self, db_session, service, seeded_permissions
     ):
-        owner = await self._owner(db_session, seeded_profiles, "ai", "linkedin_scraper")
+        owner = await self._owner(db_session, seeded_permissions, "trem:ai", "trem:linkedin_scraper")
         _, raw_key = await service.create_client(
-            name="k", profile_names=["ai", "linkedin_scraper"], user_id=str(owner.id)
+            name="k", permissions=["trem:ai", "trem:linkedin_scraper"], user_id=str(owner.id)
         )
 
-        owner.profiles = [p for p in owner.profiles if p.name == "ai"]
+        owner.permissions = [p for p in owner.permissions if p.key == "trem:ai"]
         await db_session.flush()
 
-        assert (await service.authenticate(raw_key)).profile_names == ["ai"]
+        assert (await service.authenticate(raw_key)).permissions == ["trem:ai"]
 
-    async def test_deleted_owner_removes_their_keys(self, db_session, service, repo, seeded_profiles):
-        owner = await self._owner(db_session, seeded_profiles, "ai")
+    async def test_deleted_owner_removes_their_keys(self, db_session, service, repo, seeded_permissions):
+        owner = await self._owner(db_session, seeded_permissions, "trem:ai")
         client, raw_key = await service.create_client(
-            name="k", profile_names=["ai"], user_id=str(owner.id)
+            name="k", permissions=["trem:ai"], user_id=str(owner.id)
         )
 
         await db_session.delete(owner)
@@ -374,12 +385,12 @@ class TestApiClientProfileSets:
 # ---------------------------------------------------------------------------
 
 class TestPrincipal:
-    def _client(self, profile=ProfileName.FILE_EDITOR.value):
+    def _client(self, profile=TremPermission.FILE_EDITOR.value):
         return ApiClient(
             id="c-1",
             name="flight-api",
             description=None,
-            profile_names=[profile],
+            permissions=[profile],
             revoked=False,
             last_used_at=None,
             created_at=datetime.now(timezone.utc),
@@ -421,10 +432,10 @@ class TestPrincipal:
     def test_service_key_has_no_person(self):
         assert Principal.from_client(self._client()).user_id is None
 
-    def test_has_profile_checks_membership(self):
-        p = Principal.from_user(make_mock_user(("ai", "file_editor")))
-        assert p.has_profile("ai") and p.has_profile("file_editor")
-        assert not p.has_profile("linkedin_scraper")
+    def test_has_permission_checks_membership(self):
+        p = Principal.from_user(make_mock_user(("trem:ai", "trem:file_editor")))
+        assert p.has_permission("trem:ai") and p.has_permission("trem:file_editor")
+        assert not p.has_permission("trem:linkedin_scraper")
 
 
 # ---------------------------------------------------------------------------
@@ -436,7 +447,7 @@ def probe_app():
     api = FastAPI()
 
     @api.get("/editor")
-    async def editor(p: Principal = Depends(require_profile("file_editor"))):
+    async def editor(p: Principal = Depends(require_permission("trem:file_editor"))):
         return {"name": p.display_name, "kind": p.kind.value}
 
     @api.get("/quem-sou")
@@ -455,12 +466,12 @@ def client_service():
         yield mock
 
 
-def _api_client(profile=ProfileName.FILE_EDITOR.value, name="flight-api"):
+def _api_client(profile=TremPermission.FILE_EDITOR.value, name="flight-api"):
     return ApiClient(
         id="c-1",
         name=name,
         description=None,
-        profile_names=[profile],
+        permissions=[profile],
         revoked=False,
         last_used_at=None,
         created_at=datetime.now(timezone.utc),
@@ -494,7 +505,7 @@ class TestApiKeyAuthorization:
 
     def test_wrong_profile_returns_403(self, probe_app, client_service):
         client_service.authenticate.return_value = _api_client(
-            profile=ProfileName.AIRLINE_COMPANY.value
+            profile=TremPermission.AIRLINE_COMPANY.value
         )
         response = TestClient(probe_app).get(
             "/editor", headers={"X-API-Key": "trem_chave-valida"}
@@ -502,15 +513,15 @@ class TestApiKeyAuthorization:
         assert response.status_code == 403
 
     def test_profile_among_several_is_accepted(self, probe_app, client_service):
-        client = _api_client(profile=ProfileName.AIRLINE_COMPANY.value)
-        client.profile_names = ["airline_company", "file_editor"]
+        client = _api_client(profile=TremPermission.AIRLINE_COMPANY.value)
+        client.permissions = ["trem:airline_company", "trem:file_editor"]
         client_service.authenticate.return_value = client
         response = TestClient(probe_app).get("/editor", headers={"X-API-Key": "trem_x"})
         assert response.status_code == 200
 
     def test_no_profiles_returns_403(self, probe_app, client_service):
         client = _api_client()
-        client.profile_names = []
+        client.permissions = []
         client_service.authenticate.return_value = client
         response = TestClient(probe_app).get("/editor", headers={"X-API-Key": "trem_x"})
         assert response.status_code == 403
@@ -532,11 +543,11 @@ class TestApiKeyAuthorization:
     def test_profile_comes_from_record_not_from_header(self, probe_app, client_service):
         """O chamador não consegue forjar o perfil — ele vem do banco."""
         client_service.authenticate.return_value = _api_client(
-            profile=ProfileName.AIRLINE_COMPANY.value
+            profile=TremPermission.AIRLINE_COMPANY.value
         )
         response = TestClient(probe_app).get(
             "/editor",
-            headers={"X-API-Key": "trem_x", "X-Profile": "file_editor"},
+            headers={"X-API-Key": "trem_x", "X-Profile": "trem:file_editor"},
         )
         assert response.status_code == 403
 

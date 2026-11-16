@@ -5,14 +5,22 @@ from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import AppException
+from app.core.exceptions import AppException, UnknownPermissionsError
 from app.domain.entities.api_client import (
     API_KEY_ENTROPY_BYTES,
     API_KEY_PREFIX,
     ApiClient,
 )
+from app.domain.entities.permission import TREM_APP, TremPermission
+from app.domain.entities.user import User
 from app.repositories.api_client_repository import ApiClientRepository
+from app.repositories.permission_repository import PermissionRepository
 from app.repositories.user_repository import UserRepository
+
+
+# "trem_" plus four random characters: recognisable, and far too short to guess the rest from.
+KEY_HINT_LENGTH = len(API_KEY_PREFIX) + 4
+OWN_KEYS_LIMIT = 5
 
 
 class ApiClientAlreadyExistsError(AppException):
@@ -52,11 +60,12 @@ class ApiClientService:
     def __init__(self, session: AsyncSession):
         self._repo = ApiClientRepository(session)
         self._users = UserRepository(session)
+        self._permissions = PermissionRepository(session)
 
     async def create_client(
         self,
         name: str,
-        profile_names: list[str],
+        permissions: list[str],
         description: Optional[str] = None,
         user_id: Optional[str] = None,
     ) -> tuple[ApiClient, str]:
@@ -66,32 +75,33 @@ class ApiClientService:
         A chave em claro só existe neste retorno — o banco guarda apenas o
         hash. Se for perdida, o caminho é revogar e criar outra.
         """
-        if await self._repo.get_by_name(name):
+        if await self._repo.get_active_by_name(name, user_id):
             raise ApiClientAlreadyExistsError(name)
 
-        profiles = await self._users.get_profiles_by_names(profile_names)
-        missing = set(profile_names) - {p.name for p in profiles}
+        found = await self._permissions.get_by_keys(permissions)
+        missing = set(permissions) - {p.key for p in found}
         if missing:
-            raise AppException(f"Perfis não encontrados: {', '.join(sorted(missing))}", 400)
+            raise UnknownPermissionsError(missing)
 
         if user_id is not None:
             owner = await self._users.get_by_id(user_id)
             if not owner:
                 raise AppException("Usuário dono da chave não encontrado", 400)
             # A chave nunca dá ao dono acesso que ele não tem pelo próprio login.
-            beyond = set(profile_names) - set(owner.profile_names)
+            beyond = set(permissions) - set(owner.permissions)
             if beyond:
                 raise AppException(
-                    f"Perfis fora dos do usuário dono: {', '.join(sorted(beyond))}", 400
+                    f"Permissões fora das do usuário dono: {', '.join(sorted(beyond))}", 400
                 )
 
         raw_key = generate_api_key()
         client = await self._repo.create(
             name=name,
             key_hash=hash_api_key(raw_key),
-            profile_ids=[str(p.id) for p in profiles],
+            permission_ids=[str(p.id) for p in found],
             description=description,
             user_id=user_id,
+            key_hint=raw_key[:KEY_HINT_LENGTH],
         )
         return client, raw_key
 
@@ -110,15 +120,45 @@ class ApiClientService:
             return None
 
         if client.user_id is not None:
-            # Revalidado a cada request: bloquear o dono ou tirar um perfil
+            # Revalidado a cada request: bloquear o dono ou tirar uma permissão
             # dele vale na hora para as chaves dele, sem revogar uma a uma.
             owner = await self._users.get_by_id(client.user_id)
             if not owner or not owner.is_active:
                 return None
-            client.profile_names = sorted(set(client.profile_names) & set(owner.profile_names))
+            client.permissions = sorted(set(client.permissions) & set(owner.permissions))
 
         await self._repo.touch_last_used(client.id, datetime.now(timezone.utc))
         return client
+
+    # --- Keys a user manages for themselves ---
+
+    async def create_own_key(
+        self, owner: User, name: str, permissions: Optional[list[str]], description: Optional[str] = None
+    ) -> tuple[ApiClient, str]:
+        """
+        A key of this API (trem:*), within the owner's own permissions and never admin:
+        administration needs a person with a second factor, not a key.
+        """
+        allowed = {p for p in owner.permissions if p.startswith(f"{TREM_APP}:")} - {TremPermission.ADMIN}
+        wanted = sorted(allowed) if permissions is None else permissions
+        outside = set(wanted) - allowed
+        if outside:
+            raise AppException(f"Permissões fora das suas: {', '.join(sorted(outside))}", 400)
+        if not wanted:
+            raise AppException("A chave precisa de ao menos uma permissão", 400)
+        if await self._repo.count_active_by_owner(owner.id) >= OWN_KEYS_LIMIT:
+            raise AppException(f"Limite de {OWN_KEYS_LIMIT} chaves ativas. Revogue uma para criar outra.", 409)
+        return await self.create_client(name, wanted, description=description, user_id=owner.id)
+
+    async def list_own_keys(self, owner_id: str) -> list[ApiClient]:
+        return await self._repo.list_by_owner(owner_id)
+
+    async def revoke_own_key(self, owner_id: str, client_id: str) -> None:
+        client = await self._repo.get_by_id(client_id)
+        # Someone else's key answers exactly like a missing one.
+        if not client or client.user_id != owner_id:
+            raise ApiClientNotFoundError()
+        await self._repo.revoke(client.id)
 
     async def revoke_client(self, client_id: str) -> None:
         if not await self._repo.get_by_id(client_id):

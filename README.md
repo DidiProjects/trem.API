@@ -86,10 +86,12 @@ app/
 - Limit of 20 files per merge
 
 ### Authentication
-- API Key with timing-safe comparison
-- Rate limiting (100 req/min per IP)
-- Blocking after 10 failed attempts (5 min)
-- Authentication attempt logging
+- Per-client API keys (`X-API-Key: trem_...`), 256-bit, stored as SHA-256
+- User login with Argon2id passwords and RS256 access tokens (15 min) per application
+- Opaque refresh tokens (7 days), rotated on every use; reuse of a rotated token ends the login
+- Browser sessions keep the refresh token in an `HttpOnly; Secure; SameSite=Strict` cookie
+- Login throttling per username and per IP, with the same answer for unknown users
+- Public keys at `/.well-known/jwks.json` so other applications verify tokens locally
 
 ## Requirements
 
@@ -144,15 +146,107 @@ docker run -d --name trem-test-pg -e POSTGRES_PASSWORD=test -e POSTGRES_DB=trem_
 TEST_DATABASE_URL=postgresql+asyncpg://postgres:test@127.0.0.1:55432/trem_test pytest tests/test_migrations.py -v
 ```
 
+The breached-password check against the real Have I Been Pwned (skipped without the variable):
+
+```bash
+PWNED_NETWORK_TEST=1 pytest tests/test_breached_password.py -v
+```
+
 After each deploy, check uploads through Cloudflare and the reverse proxy (skipped without the variables):
 
 ```bash
 SMOKE_API_URL=https://api.didilv93.com SMOKE_API_KEY=... pytest tests/test_deployed_uploads.py -v
 ```
 
+## Postman
+
+`postman/collections/trem-api.json` has every route, grouped by area, and
+`postman/environments/` has `local` and `prod`. Import both, fill `username` and `password`
+in the environment (and `apiKey`, optionally), then run `Auth › POST /auth/login`: the
+tokens are stored as collection variables, and `POST /auth/mfa/verify` takes over when TOTP
+is on. When `apiKey` is set, the tool routes also send `X-API-Key`, which the API prefers;
+`/auth`, `/me` and `/admin` always use the login.
+
+The collection is generated from the OpenAPI; after changing routes, regenerate it
+(`tests/test_postman_collection.py` fails while it is stale):
+
+```bash
+python -m scripts.build_postman_collection
+```
+
 ## Endpoints
 
-All endpoints require the `X-API-Key` header.
+Endpoints authenticate with `X-API-Key: trem_...` or `Authorization: Bearer <access token>`.
+
+### Auth
+```
+POST /auth/login            {"username", "password", "audience": "trem", "session": "body" | "cookie"}
+POST /auth/refresh          {"refresh_token"}  or the session cookie + X-Requested-With: trem
+POST /auth/logout           {"refresh_token"}  or the session cookie + X-Requested-With: trem
+POST /auth/change-password  {"current_password", "new_password"}  (Bearer)
+GET  /.well-known/jwks.json
+
+POST /auth/register             {"username", "email", "password"}   → 202
+POST /auth/verify-email         {"token"}                            (from the e-mail link)
+POST /auth/resend-verification  {"email"}                            → 202
+POST /auth/forgot-password      {"email"}                            → 202
+POST /auth/reset-password       {"token", "new_password"}            (from the e-mail link)
+```
+
+Second factor (TOTP):
+```
+POST /auth/mfa/enroll           {"password"}                → {"secret", "otpauth_uri"}
+POST /auth/mfa/confirm          {"code"}                    → {"recovery_codes"}
+POST /auth/mfa/verify           {"mfa_token", "code" | "recovery_code", "session"}
+POST /auth/mfa/recovery-codes   {"password", "code"}
+POST /auth/mfa/disable          {"password", "code"}
+```
+With TOTP on, `/auth/login` answers `{"mfa_required": true, "mfa_token"}` and the tokens
+come from `/auth/mfa/verify`.
+
+### Me
+
+A logged-in user (JWT, not an API key) manages their own keys: at most 5 active, each shown
+in full only in the creation response.
+
+```
+GET    /me
+GET    /me/api-keys                    → [{id, name, permissions, key_hint, revoked, last_used_at}]
+POST   /me/api-keys  {"name", "permissions"?}  → {..., "api_key": "trem_..."}
+DELETE /me/api-keys/{id}
+```
+
+A key can hold only the owner's `trem:*` permissions, never `trem:admin`.
+
+### Admin
+
+Requires a login holding `trem:admin` and proven with TOTP (`amr` contains `otp`). The
+first admin is created on the server with `python -m scripts.bootstrap_admin <username> --email <e-mail>`.
+
+```
+GET  /admin/users?status=pending_approval
+POST /admin/users/{id}/approve          {"permissions": ["trem:ai", "financas:read"]}
+POST /admin/users/{id}/reject | suspend | reactivate
+PUT  /admin/users/{id}/permissions      {"permissions": [...]}
+GET  /admin/applications                POST /admin/applications {"slug", "name"}
+POST /admin/applications/{slug}/permissions {"name"}
+DELETE /admin/applications/{slug}[/permissions/{name}]
+```
+
+Sign-up: the account waits for e-mail confirmation, then for an admin to approve it and
+grant permissions. `register`, `resend-verification` and `forgot-password` answer the same
+whether or not the e-mail or username exists. A reset link lasts 60 minutes, works once, ends
+every session, and leaves TOTP on. New passwords found in known breaches (Have I Been Pwned,
+k-anonymity: only 5 characters of the SHA-1 leave the server) are refused with 422; if the
+service does not answer, the password is accepted. Passwords: 12 to 128 characters, no composition rules, must not
+contain the username or e-mail.
+
+Login and refresh answer `{"access_token", "refresh_token", "token_type", "expires_in",
+"must_change_password"}`; with the cookie session, `refresh_token` is left out of the body.
+Every refresh returns a new refresh token: keep the newest one, the old one is dead.
+
+Other applications verify the access token with the JWKS: RS256, `iss` = this API's URL,
+`aud` = their own slug. `perms` lists only that application's permissions.
 
 ### Health Check
 ```
@@ -392,7 +486,7 @@ model takes minutes to load, a long prompt can take minutes to answer), so over 
 public URL use the [job endpoints](#chat-job): Cloudflare cuts responses at 100 s and
 nginx at 60 s. The synchronous endpoint is for callers on the local port. One inference
 runs at a time, jobs included; when the queue is full the API answers `503` with
-`Retry-After`. Every `/llm` route requires the `ai` profile (`403` without it).
+`Retry-After`. Every `/llm` route requires the `trem:ai` permission (`403` without it).
 
 #### Chat Completion
 ```
@@ -458,7 +552,7 @@ or `503` when the model server is unreachable.
 ### Scraper Endpoints
 
 LinkedIn jobs and posts collected on a schedule and scored against the caller's CV, run by
-the linkedinho orchestrator on the internal network. Requires the `linkedin_scraper` profile
+the linkedinho orchestrator on the internal network. Requires the `trem:linkedin_scraper` permission
 and a person behind the call: a logged-in user, or an API key owned by a user (a service key
 without owner gets `403`). Jobs belong to that user, not to the key. The **Scrapers** tab of
 `/` does all of this.
@@ -574,6 +668,22 @@ response = requests.post(url, headers=headers, files=files, data=data)
 metrics = response.json()["metrics"]
 print(f"Reduced {metrics['reduction_percent']}%")
 ```
+
+## Web Page
+
+`/` is the playground for every endpoint and, since the account work, the way people sign up
+and manage their access:
+
+- **Sign up** → confirmation e-mail → the admin approves and chooses the permissions.
+- **Log in**, with a TOTP code when two-factor is on; a provisional password must be changed first.
+- **Account** tab: profile, own API keys (at most 5, the full key shown once), two-factor set-up
+  and recovery codes, password change.
+- The API key field stays as the alternative to logging in.
+
+The access token stays in memory and the refresh token in an HttpOnly cookie, so a reload
+restores the session without JavaScript ever reading it. Refreshes are serialised across tabs
+(each one rotates the cookie). Scripts: `app/static/account.js` (session and account) before
+`app/static/script.js` (the tools), which sends requests through `authFetch`.
 
 ## Interactive Documentation
 

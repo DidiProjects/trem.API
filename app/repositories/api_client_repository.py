@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.interfaces.i_api_client_repository import IApiClientRepository
 from app.domain.entities.api_client import ApiClient
-from app.infrastructure.database.models import ApiClientModel, ProfileModel
+from app.infrastructure.database.models import ApiClientModel, PermissionModel
 from app.repositories.base import BaseRepository
 from app.repositories.user_repository import _as_uuid
 
@@ -16,11 +16,12 @@ def _to_entity(orm: ApiClientModel) -> ApiClient:
         id=str(orm.id),
         name=orm.name,
         description=orm.description,
-        profile_names=sorted(p.name for p in orm.profiles),
+        permissions=sorted(p.key for p in orm.permissions),
         revoked=orm.revoked,
         last_used_at=orm.last_used_at,
         created_at=orm.created_at,
         user_id=str(orm.user_id) if orm.user_id else None,
+        key_hint=orm.key_hint,
     )
 
 
@@ -49,32 +50,51 @@ class ApiClientRepository(BaseRepository, IApiClientRepository):
         orm = result.scalar_one_or_none()
         return _to_entity(orm) if orm else None
 
-    async def get_by_name(self, name: str) -> Optional[ApiClient]:
+    async def get_active_by_name(self, name: str, user_id: Optional[str]) -> Optional[ApiClient]:
+        owner = ApiClientModel.user_id == _as_uuid(user_id) if user_id else ApiClientModel.user_id.is_(None)
         result = await self._session.execute(
             select(ApiClientModel)
-            .where(ApiClientModel.name == name)
+            .where(ApiClientModel.name == name, owner, ApiClientModel.revoked.is_(False))
         )
         orm = result.scalar_one_or_none()
         return _to_entity(orm) if orm else None
+
+    async def list_by_owner(self, user_id: str) -> list[ApiClient]:
+        result = await self._session.execute(
+            select(ApiClientModel)
+            .where(ApiClientModel.user_id == _as_uuid(user_id))
+            .order_by(ApiClientModel.revoked, ApiClientModel.created_at.desc())
+        )
+        return [_to_entity(row) for row in result.scalars().all()]
+
+    async def count_active_by_owner(self, user_id: str) -> int:
+        result = await self._session.execute(
+            select(func.count()).select_from(ApiClientModel).where(
+                ApiClientModel.user_id == _as_uuid(user_id), ApiClientModel.revoked.is_(False)
+            )
+        )
+        return result.scalar_one()
 
     async def create(
         self,
         name: str,
         key_hash: str,
-        profile_ids: list[str],
+        permission_ids: list[str],
         description: Optional[str] = None,
         user_id: Optional[str] = None,
+        key_hint: Optional[str] = None,
     ) -> ApiClient:
-        ids = [i for i in (_as_uuid(p) for p in profile_ids) if i]
-        profiles = (
-            await self._session.execute(select(ProfileModel).where(ProfileModel.id.in_(ids)))
+        ids = [i for i in (_as_uuid(p) for p in permission_ids) if i]
+        permissions = (
+            await self._session.execute(select(PermissionModel).where(PermissionModel.id.in_(ids)))
         ).scalars().all()
         orm = ApiClientModel(
             name=name,
             key_hash=key_hash,
-            profiles=list(profiles),
+            permissions=list(permissions),
             description=description,
             user_id=_as_uuid(user_id),
+            key_hint=key_hint,
         )
         self._session.add(orm)
         await self._session.flush()

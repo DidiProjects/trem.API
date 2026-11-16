@@ -21,8 +21,10 @@ from app.core.config import Settings, get_settings
 from app.core.exceptions import TokenExpiredError, TokenInvalidError
 from app.core.security import (
     create_access_token,
-    create_refresh_token,
     decode_token,
+    generate_refresh_token,
+    jwks,
+    public_jwk,
     generate_provisional_password,
     hash_password,
     hash_token,
@@ -136,73 +138,112 @@ class TestAccessToken:
         token = create_access_token(
             user_id=USER_ID,
             username="testuser",
-            profiles=["file_editor", "ai"],
+            permissions=["trem:file_editor", "trem:ai"],
             must_change_password=False,
         )
         payload = decode_token(token)
 
         assert payload["sub"] == USER_ID
         assert payload["username"] == "testuser"
-        assert payload["profiles"] == ["ai", "file_editor"]
-        assert "profile" not in payload
+        assert payload["perms"] == ["trem:ai", "trem:file_editor"]
         assert payload["must_change_password"] is False
         assert payload["type"] == "access"
+        assert payload["aud"] == "trem"
+        assert payload["iss"] == "http://testserver"
+        assert payload["amr"] == ["pwd"]
+        assert payload["jti"]
+
+    def test_carries_only_the_audience_permissions(self):
+        token = create_access_token(
+            USER_ID, "u", ["trem:ai", "financas:read", "financas-old:x"], False, audience="financas"
+        )
+        assert decode_token(token, audience="financas")["perms"] == ["financas:read"]
+
+    def test_is_rejected_by_another_audience(self):
+        token = create_access_token(USER_ID, "u", ["financas:read"], False, audience="financas")
+        with pytest.raises(TokenInvalidError):
+            decode_token(token)
+
+    def test_header_names_the_signing_key(self):
+        token = create_access_token(USER_ID, "u", [], False)
+        assert pyjwt.get_unverified_header(token)["kid"] == public_jwk(TEST_PUBLIC_KEY)["kid"]
+
+    def test_jti_is_unique(self):
+        a = decode_token(create_access_token(USER_ID, "u", [], False))["jti"]
+        b = decode_token(create_access_token(USER_ID, "u", [], False))["jti"]
+        assert a != b
 
     def test_must_change_password_flag_is_preserved(self):
-        token = create_access_token(USER_ID, "u", ["file_editor"], True)
+        token = create_access_token(USER_ID, "u", ["trem:file_editor"], True)
         assert decode_token(token)["must_change_password"] is True
 
     def test_has_exp_and_iat(self):
-        payload = decode_token(create_access_token(USER_ID, "u", ["file_editor"], False))
+        payload = decode_token(create_access_token(USER_ID, "u", ["trem:file_editor"], False))
         assert payload["exp"] > payload["iat"]
 
     def test_expires_according_to_settings(self):
-        payload = decode_token(create_access_token(USER_ID, "u", ["file_editor"], False))
+        payload = decode_token(create_access_token(USER_ID, "u", ["trem:file_editor"], False))
         lifetime = payload["exp"] - payload["iat"]
         expected = get_settings().ACCESS_TOKEN_EXPIRE_MINUTES * 60
         assert abs(lifetime - expected) <= 1
 
     def test_is_signed_with_rs256(self):
-        token = create_access_token(USER_ID, "u", ["file_editor"], False)
+        token = create_access_token(USER_ID, "u", ["trem:file_editor"], False)
         assert pyjwt.get_unverified_header(token)["alg"] == "RS256"
 
     def test_token_is_a_string(self):
-        assert isinstance(create_access_token(USER_ID, "u", ["file_editor"], False), str)
+        assert isinstance(create_access_token(USER_ID, "u", ["trem:file_editor"], False), str)
 
 
 class TestRefreshToken:
-    def test_returns_token_and_jti(self):
-        token, jti = create_refresh_token(USER_ID)
-        assert isinstance(token, str)
-        assert decode_token(token)["jti"] == jti
+    def test_is_random_and_long(self):
+        a, b = generate_refresh_token(), generate_refresh_token()
+        assert a != b
+        assert len(a) >= 43  # 32 bytes in url-safe base64
 
-    def test_type_is_refresh(self):
-        token, _ = create_refresh_token(USER_ID)
-        assert decode_token(token)["type"] == "refresh"
+    def test_is_not_a_token_the_api_accepts(self):
+        """Opaco: sem o banco, não vale nada — nem como access token."""
+        with pytest.raises(TokenInvalidError):
+            decode_token(generate_refresh_token())
 
-    def test_jti_is_unique_per_call(self):
-        _, jti_a = create_refresh_token(USER_ID)
-        _, jti_b = create_refresh_token(USER_ID)
-        assert jti_a != jti_b
 
-    def test_lives_longer_than_access_token(self):
-        refresh, _ = create_refresh_token(USER_ID)
-        access = create_access_token(USER_ID, "u", ["file_editor"], False)
-        assert decode_token(refresh)["exp"] > decode_token(access)["exp"]
+class TestJwks:
+    def test_kid_is_the_rfc7638_thumbprint(self):
+        jwk = public_jwk(TEST_PUBLIC_KEY)
+        canonical = json.dumps({"e": jwk["e"], "kty": "RSA", "n": jwk["n"]}, separators=(",", ":"))
+        expected = base64.urlsafe_b64encode(hashlib.sha256(canonical.encode()).digest()).decode().rstrip("=")
+        assert jwk["kid"] == expected
 
-    def test_does_not_carry_profile_claims(self):
-        """Refresh token só serve para renovar — não deve carregar autorização."""
-        payload = decode_token(create_refresh_token(USER_ID)[0])
-        assert "profile" not in payload
-        assert "profiles" not in payload
-        assert "must_change_password" not in payload
+    def test_publishes_only_public_material(self):
+        (key,) = jwks()["keys"]
+        assert set(key) == {"kty", "e", "n", "kid", "use", "alg"}
+
+    def test_retired_key_still_verifies_during_rotation(self):
+        old = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        old_private = old.private_bytes(
+            serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+        ).decode()
+        old_public = old.public_key().public_bytes(
+            serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+        ).decode()
+
+        signing_old = _settings_with(JWT_PRIVATE_KEY=old_private, JWT_PUBLIC_KEY=old_public)
+        with patch("app.core.security.get_settings", return_value=signing_old):
+            token = create_access_token(USER_ID, "u", [], False)
+
+        rotated = _settings_with(JWT_EXTRA_PUBLIC_KEYS=old_public)
+        with patch("app.core.security.get_settings", return_value=rotated):
+            assert decode_token(token)["sub"] == USER_ID
+            assert len(jwks()["keys"]) == 2
+        with pytest.raises(TokenInvalidError):
+            decode_token(token)  # once the old key leaves the list, its tokens stop working
 
 
 class TestDecodeTokenRejections:
     def test_expired_token_raises_token_expired(self):
         expired = _settings_with(ACCESS_TOKEN_EXPIRE_MINUTES=-5)
         with patch("app.core.security.get_settings", return_value=expired):
-            token = create_access_token(USER_ID, "u", ["file_editor"], False)
+            token = create_access_token(USER_ID, "u", ["trem:file_editor"], False)
             with pytest.raises(TokenExpiredError):
                 decode_token(token)
 
@@ -215,11 +256,11 @@ class TestDecodeTokenRejections:
             decode_token("")
 
     def test_tampered_payload_raises_token_invalid(self):
-        token = create_access_token(USER_ID, "u", ["file_editor"], False)
+        token = create_access_token(USER_ID, "u", ["trem:file_editor"], False)
         header, payload, signature = token.split(".")
 
         decoded = json.loads(base64.urlsafe_b64decode(payload + "=="))
-        decoded["profiles"] = ["airline_company", "ai"]  # escalada de privilégio
+        decoded["perms"] = ["trem:airline_company", "trem:ai"]  # escalada de privilégio
         forged = base64.urlsafe_b64encode(json.dumps(decoded).encode()).decode().rstrip("=")
 
         with pytest.raises(TokenInvalidError):
@@ -238,11 +279,14 @@ class TestDecodeTokenRejections:
             {
                 "sub": USER_ID,
                 "type": "access",
+                "aud": "trem",
+                "iss": "http://testserver",
                 "iat": now,
                 "exp": now + timedelta(minutes=10),
             },
             other_pem,
             algorithm="RS256",
+            headers={"kid": public_jwk(TEST_PUBLIC_KEY)["kid"]},  # claims to be ours
         )
         with pytest.raises(TokenInvalidError):
             decode_token(forged)
@@ -272,10 +316,13 @@ class TestDecodeTokenRejections:
             return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
         now = int(datetime.now(timezone.utc).timestamp())
-        header = b64(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
+        header = b64(json.dumps(
+            {"alg": "HS256", "typ": "JWT", "kid": public_jwk(TEST_PUBLIC_KEY)["kid"]}
+        ).encode())
         payload = b64(
             json.dumps(
-                {"sub": USER_ID, "type": "access", "iat": now, "exp": now + 600}
+                {"sub": USER_ID, "type": "access", "aud": "trem", "iss": "http://testserver",
+                 "iat": now, "exp": now + 600}
             ).encode()
         )
         signature = b64(
@@ -291,13 +338,34 @@ class TestDecodeTokenRejections:
 
     def test_token_without_required_claims_is_rejected(self):
         now = datetime.now(timezone.utc)
-        incomplete = pyjwt.encode(
-            {"sub": USER_ID, "exp": now + timedelta(minutes=10), "iat": now},
-            TEST_PRIVATE_KEY,
-            algorithm="RS256",
+        kid = {"kid": public_jwk(TEST_PUBLIC_KEY)["kid"]}
+        base = {"sub": USER_ID, "type": "access", "aud": "trem", "iss": "http://testserver",
+                "exp": now + timedelta(minutes=10), "iat": now}
+        for missing in ("type", "aud", "iss"):
+            claims = {k: v for k, v in base.items() if k != missing}
+            incomplete = pyjwt.encode(claims, TEST_PRIVATE_KEY, algorithm="RS256", headers=kid)
+            with pytest.raises(TokenInvalidError):
+                decode_token(incomplete)
+
+    def test_token_from_another_issuer_is_rejected(self):
+        now = datetime.now(timezone.utc)
+        token = pyjwt.encode(
+            {"sub": USER_ID, "type": "access", "aud": "trem", "iss": "https://evil.example",
+             "exp": now + timedelta(minutes=10), "iat": now},
+            TEST_PRIVATE_KEY, algorithm="RS256", headers={"kid": public_jwk(TEST_PUBLIC_KEY)["kid"]},
         )
-        with pytest.raises(TokenInvalidError):  # falta o claim "type"
-            decode_token(incomplete)
+        with pytest.raises(TokenInvalidError):
+            decode_token(token)
+
+    def test_token_without_kid_is_rejected(self):
+        now = datetime.now(timezone.utc)
+        token = pyjwt.encode(
+            {"sub": USER_ID, "type": "access", "aud": "trem", "iss": "http://testserver",
+             "exp": now + timedelta(minutes=10), "iat": now},
+            TEST_PRIVATE_KEY, algorithm="RS256",
+        )
+        with pytest.raises(TokenInvalidError):
+            decode_token(token)
 
 
 class TestHashToken:

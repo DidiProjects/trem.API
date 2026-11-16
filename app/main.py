@@ -11,8 +11,11 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.middleware.body_size_limit import BodySizeLimitMiddleware
+from app.api.v1.routers import admin as admin_router
 from app.api.v1.routers import api_clients as api_clients_router
 from app.api.v1.routers import auth as auth_router
+from app.api.v1.routers import me as me_router
+from app.api.v1.routers import signup as signup_router
 from app.api.v1.routers import users as users_router
 from app.core.config import get_settings
 from app.routers import (
@@ -46,6 +49,7 @@ def _file_hash(path: Path) -> str:
 
 _static_hashes = {
     "style.css": _file_hash(static_dir / "style.css"),
+    "account.js": _file_hash(static_dir / "account.js"),
     "script.js": _file_hash(static_dir / "script.js"),
 }
 
@@ -101,8 +105,12 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 # --- Routers v1: autenticação e gestão de usuários ---
 app.include_router(auth_router.router)
+app.include_router(auth_router.well_known_router)
+app.include_router(signup_router.router)
+app.include_router(me_router.router)
 app.include_router(users_router.router)
 app.include_router(api_clients_router.router)
+app.include_router(admin_router.router)
 
 # --- Routers de processamento de arquivos (mantidos) ---
 app.include_router(pdfRoute.router, prefix="/pdf", tags=["PDF"])
@@ -123,10 +131,11 @@ async def root():
         'href="/static/style.css"',
         f'href="/static/style.css?v={_static_hashes["style.css"]}"',
     )
-    html = html.replace(
-        'src="/static/script.js"',
-        f'src="/static/script.js?v={_static_hashes["script.js"]}"',
-    )
+    for script in ("account.js", "script.js"):
+        html = html.replace(
+            f'src="/static/{script}"',
+            f'src="/static/{script}?v={_static_hashes[script]}"',
+        )
     return HTMLResponse(content=html)
 
 

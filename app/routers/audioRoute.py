@@ -4,7 +4,8 @@ from starlette.background import BackgroundTask
 import tempfile
 import os
 import shutil
-from app.api.v1.dependencies import require_profile
+from app.api.v1.dependencies import require_permission
+from app.domain.entities.permission import TremPermission
 from app.domain.entities.api_client import Principal
 from app.services.audioService import (
     cut_audio,
@@ -35,7 +36,7 @@ async def audio_cut(
     file: UploadFile = File(...),
     start: float = Form(...),
     end: float = Form(...),
-    _: Principal = Depends(require_profile("file_editor"))
+    _: Principal = Depends(require_permission(TremPermission.FILE_EDITOR))
 ):
     """
     Recorta um áudio entre os tempos definidos.

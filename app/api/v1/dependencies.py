@@ -11,6 +11,7 @@ from app.core.exceptions import (
 )
 from app.core.security import decode_token
 from app.domain.entities.api_client import Principal
+from app.domain.entities.permission import split_permission_key
 from app.domain.entities.user import User
 from app.infrastructure.database.connection import get_db
 from app.repositories.user_repository import UserRepository
@@ -22,7 +23,7 @@ _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Security(_bearer),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> User:
     if not credentials:
         raise HTTPException(
@@ -51,6 +52,7 @@ async def get_current_user(
             detail="Usuário bloqueado ou suspenso",
         )
 
+    user.amr = tuple(payload.get("amr") or ())
     return user
 
 
@@ -69,7 +71,7 @@ async def get_current_active_user(
 async def authenticated_user_or_none(
     api_key: Optional[str] = Security(_api_key_header),
     credentials: Optional[HTTPAuthorizationCredentials] = Security(_bearer),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> Optional[User]:
     """
     Resolve o usuário do Bearer, ou None quando não há Bearer utilizável.
@@ -93,7 +95,7 @@ async def authenticated_user_or_none(
 async def get_current_principal(
     api_key: Optional[str] = Security(_api_key_header),
     user: Optional[User] = Depends(authenticated_user_or_none),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> Principal:
     """
     Resolve quem chamou, aceitando as duas formas de credencial:
@@ -103,7 +105,7 @@ async def get_current_principal(
 
     A API key é checada primeiro por ser o caminho majoritário hoje. O
     resultado é normalizado em Principal para que as rotas — e o
-    require_profile — não precisem saber qual foi usada.
+    require_permission — não precisem saber qual foi usada.
     """
     if api_key:
         client = await ApiClientService(db).authenticate(api_key)
@@ -129,16 +131,33 @@ async def get_current_principal(
     )
 
 
-def require_profile(profile_name: str) -> Callable:
+async def require_admin(user: User = Depends(get_current_active_user)) -> User:
     """
-    Factory: exige um perfil específico, seja o chamador usuário ou cliente.
+    Administration needs a person, not a key: a JWT login holding trem:admin, proven with
+    the second factor. A leaked password or API key alone cannot reach it.
+    """
+    if not user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permissão insuficiente para este recurso")
+    if "otp" not in user.amr:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administração exige login com segundo fator (TOTP)",
+        )
+    return user
 
-    O perfil vem sempre do banco (registro do usuário ou do cliente), nunca de
+
+def require_permission(key: str) -> Callable:
+    """
+    Factory: exige uma permissão "<aplicação>:<permissão>", seja o chamador usuário ou cliente.
+
+    A permissão vem sempre do banco (registro do usuário ou do cliente), nunca de
     algo que o chamador possa forjar no request — nem do claim do JWT, que
     poderia estar defasado em relação ao banco.
     """
+    split_permission_key(key)
+
     async def _check(principal: Principal = Depends(get_current_principal)) -> Principal:
-        if not principal.has_profile(profile_name):
+        if not principal.has_permission(key):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Permissão insuficiente para este recurso",

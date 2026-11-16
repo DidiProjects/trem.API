@@ -45,6 +45,8 @@ class TestRoot:
         html = client_no_auth.get("/").text
         assert "/static/style.css?v=" in html
         assert "/static/script.js?v=" in html
+        assert "/static/account.js?v=" in html
+        assert html.index("/static/account.js") < html.index("/static/script.js")  # script.js uses its functions
 
     def test_is_hidden_from_schema(self):
         assert "/" not in app.openapi()["paths"]
