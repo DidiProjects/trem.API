@@ -169,6 +169,32 @@ POST /auth/verify-email         {"token"}                            (from the e
 POST /auth/resend-verification  {"email"}                            → 202
 ```
 
+Second factor (TOTP):
+```
+POST /auth/mfa/enroll           {"password"}                → {"secret", "otpauth_uri"}
+POST /auth/mfa/confirm          {"code"}                    → {"recovery_codes"}
+POST /auth/mfa/verify           {"mfa_token", "code" | "recovery_code", "session"}
+POST /auth/mfa/recovery-codes   {"password", "code"}
+POST /auth/mfa/disable          {"password", "code"}
+```
+With TOTP on, `/auth/login` answers `{"mfa_required": true, "mfa_token"}` and the tokens
+come from `/auth/mfa/verify`.
+
+### Admin
+
+Requires a login holding `trem:admin` and proven with TOTP (`amr` contains `otp`). The
+first admin is created on the server with `python -m scripts.bootstrap_admin <username> --email <e-mail>`.
+
+```
+GET  /admin/users?status=pending_approval
+POST /admin/users/{id}/approve          {"permissions": ["trem:ai", "financas:read"]}
+POST /admin/users/{id}/reject | suspend | reactivate
+PUT  /admin/users/{id}/permissions      {"permissions": [...]}
+GET  /admin/applications                POST /admin/applications {"slug", "name"}
+POST /admin/applications/{slug}/permissions {"name"}
+DELETE /admin/applications/{slug}[/permissions/{name}]
+```
+
 Sign-up: the account waits for e-mail confirmation, then for an admin to approve it and
 grant permissions. `register` and `resend-verification` answer the same whether or not the
 e-mail or username exists. Passwords: 12 to 128 characters, no composition rules, must not

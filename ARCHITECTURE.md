@@ -215,14 +215,46 @@ de formas diferentes, mas passam pela mesma checagem de permissão.
 |----------|-----------|--------|
 | Aplicação | API key por cliente | `X-API-Key: trem_...` |
 | Usuário | JWT RS256 | `Authorization: Bearer ...` |
-| Administrador | master key | `X-API-Key: <API_KEY>` |
+| Administrador | JWT com `trem:admin` e `amr` contendo `otp` | `Authorization: Bearer ...` |
 
 As duas primeiras são normalizadas em um `Principal` (`app/domain/entities/api_client.py`),
 que é o que `require_permission()` inspeciona. As rotas não sabem — nem precisam
 saber — qual esquema foi usado.
 
-A **master key** (`settings.API_KEY`) é a exceção: serve só para administrar
-credenciais em `/admin/clients` e `/users`. Ela não autentica rotas de negócio.
+A administração (`/admin/*`, `/users`) exige uma **pessoa**: login JWT de quem tem
+`trem:admin`, feito com segundo fator (TOTP). Uma senha vazada ou uma API key não
+chegam lá. A antiga master key (`API_KEY`) não administra mais nada.
+
+### Segundo fator (TOTP)
+
+- RFC 6238 (SHA-1, 6 dígitos, 30 s, um passo de tolerância), implementado em
+  `app/core/totp.py` e conferido contra os vetores da RFC.
+- Segredo de 160 bits cifrado com AES-256-GCM (`MFA_ENCRYPTION_KEY`, fora do banco), com
+  o id do usuário como dado associado: copiado para outra conta, não decifra.
+- O último passo aceito fica gravado (`totp_last_step`): o mesmo código não entra duas
+  vezes, nem em corrida (`UPDATE ... WHERE totp_last_step < :step`).
+- 10 códigos de recuperação de uso único, SHA-256 no banco, mostrados só na criação.
+- Tentativas limitadas por conta (`MFA_MAX_ATTEMPTS` por `MFA_WINDOW_SECONDS`).
+- Cadastrar, regenerar códigos ou desativar pede a senha de novo; desativar encerra
+  todas as sessões.
+
+Login com TOTP ativo é em dois passos:
+
+```
+POST /auth/login       → {"mfa_required": true, "mfa_token": "..."}   (5 min, não abre rota nenhuma)
+POST /auth/mfa/verify  {"mfa_token", "code" | "recovery_code", "session"} → tokens, amr ["pwd","otp"]
+```
+
+O `amr` fica no refresh token e passa para os tokens renovados.
+
+### Primeiro admin
+
+```bash
+docker exec -it trem-api python -m scripts.bootstrap_admin diego --email voce@example.com
+```
+
+Cria a conta ativa com `trem:admin` e senha provisória (mostrada uma vez), ou promove uma
+conta existente. Depois: trocar a senha, cadastrar o TOTP e entrar de novo com o código.
 
 ### API keys por cliente
 
@@ -428,10 +460,41 @@ sobrescreve; o primeiro item do `X-Forwarded-For` é escolhido pelo cliente.
 
 | Método | Path                                     | Auth     | Descrição                       |
 |--------|------------------------------------------|----------|---------------------------------|
-| POST   | `/users`                                 | API Key  | Cria novo usuário               |
-| GET    | `/users`                                 | API Key  | Lista usuários (paginado)       |
-| GET    | `/users/{id}`                            | API Key  | Detalha usuário                 |
-| POST   | `/users/{id}/send-provisional-password`  | API Key  | Envia senha provisória por email|
+| POST   | `/users`                                 | Admin    | Cria novo usuário               |
+| GET    | `/users`                                 | Admin    | Lista usuários (paginado)       |
+| GET    | `/users/{id}`                            | Admin    | Detalha usuário                 |
+| POST   | `/users/{id}/send-provisional-password`  | Admin    | Envia senha provisória por email|
+
+### Administração (`/admin`) — admin com TOTP
+
+| Método | Path | Descrição |
+|--------|------|-----------|
+| GET    | `/admin/users?status=pending_approval` | Lista, com filtro de status |
+| GET    | `/admin/users/{id}` | Detalha |
+| POST   | `/admin/users/{id}/approve` | `{"permissions": [...]}`: ativa com exatamente essas |
+| POST   | `/admin/users/{id}/reject` | Recusa o cadastro |
+| POST   | `/admin/users/{id}/suspend` | Bloqueia, encerra sessões, para as API keys do dono |
+| POST   | `/admin/users/{id}/reactivate` | Volta de suspensa para ativa |
+| PUT    | `/admin/users/{id}/permissions` | Substitui o conjunto e encerra as sessões |
+| GET/POST | `/admin/applications` | Lista (com permissões) / cria `{slug, name}` |
+| DELETE | `/admin/applications/{slug}` | Remove, com permissões, concessões e sessões |
+| POST   | `/admin/applications/{slug}/permissions` | Cria `{name}` |
+| DELETE | `/admin/applications/{slug}/permissions/{name}` | Remove |
+
+Proteções: o admin não muda o estado da própria conta nem tira o próprio `trem:admin`;
+a aplicação `trem` e suas permissões (usadas pelo código) não podem ser removidas.
+Trocar permissões encerra as sessões porque os access tokens carregam as permissões
+que as outras aplicações leem; os já emitidos valem até expirar (15 min).
+
+### MFA (`/auth/mfa`) — usuário logado
+
+| Método | Path | Descrição |
+|--------|------|-----------|
+| POST | `/auth/mfa/enroll` | `{password}` → `{secret, otpauth_uri}` (ainda inativo) |
+| POST | `/auth/mfa/confirm` | `{code}` → ativa e devolve os códigos de recuperação |
+| POST | `/auth/mfa/recovery-codes` | `{password, code}` → novo conjunto |
+| POST | `/auth/mfa/disable` | `{password, code}` → desativa e encerra as sessões |
+| POST | `/auth/mfa/verify` | Segundo passo do login |
 
 `POST /users` recebe `permissions` (lista de chaves `<aplicação>:<permissão>`, ao menos
 uma). `POST /admin/clients` recebe `permissions` e, opcionalmente, `user_id` do dono.
