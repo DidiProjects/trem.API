@@ -49,6 +49,8 @@ os.environ.update(
         "EMAIL_RECIPIENT": "",
         "AIRLINE_API_URL": "",
         "AIRLINE_API_KEY": "",
+        # Tests never reach Have I Been Pwned; test_breached_password turns it on with a fake transport.
+        "PWNED_PASSWORDS_ENABLED": "False",
     }
 )
 

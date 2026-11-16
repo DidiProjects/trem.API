@@ -448,6 +448,12 @@ sobrescreve; o primeiro item do `X-Forwarded-For` é escolhido pelo cliente.
 - **Senha**: mínimo 12, máximo 128, sem regra de composição (NIST SP 800-63B); não pode
   conter o username nem o e-mail, nem ser quase toda o mesmo caractere. Vale também
   para a troca de senha.
+- **Senha vazada**: cadastro, troca e redefinição consultam o Have I Been Pwned pela API
+  de range (k-anonimidade): sai do servidor só o prefixo de 5 caracteres do SHA-1, com
+  `Add-Padding`, e a comparação do sufixo é local. Achou, 422. Se o serviço não responde
+  em `PWNED_PASSWORDS_TIMEOUT` (3 s), a senha é aceita: uma queda de terceiro não trava
+  cadastro nem redefinição. `PWNED_PASSWORDS_ENABLED=false` desliga. Na troca, a consulta
+  só acontece depois de a senha atual ser conferida.
 
 ## Esqueci a senha
 

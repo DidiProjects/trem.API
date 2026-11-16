@@ -32,6 +32,7 @@ from app.domain.entities.user import User, UserStatus
 from app.domain.schemas.auth import TokenResponse
 from app.repositories.permission_repository import PermissionRepository
 from app.repositories.user_repository import UserRepository
+from app.services.breached_password import ensure_not_breached
 from app.services.login_throttle import LoginThrottle, get_login_throttle
 from app.services.mfa_service import MfaService
 
@@ -200,6 +201,7 @@ class AuthService:
 
         if not verify_password(current_password, user.password_hash):
             raise InvalidCredentialsError("Senha atual incorreta")
+        await ensure_not_breached(new_password)
 
         await self._repo.update_password(
             user_id=user_id,
