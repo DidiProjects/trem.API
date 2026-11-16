@@ -48,6 +48,7 @@ def _to_entity(orm: UserModel) -> User:
         email_verified_at=orm.email_verified_at,
         approved_at=orm.approved_at,
         approved_by=str(orm.approved_by) if orm.approved_by else None,
+        totp_enabled=orm.totp_enabled_at is not None,
     )
 
 
@@ -178,20 +179,48 @@ class UserRepository(BaseRepository, IUserRepository):
             )
         )
 
-    async def list_all(self, limit: int = 50, offset: int = 0) -> list[User]:
-        result = await self._session.execute(
-            select(UserModel)
-            .order_by(UserModel.created_at.desc())
-            .limit(limit)
-            .offset(offset)
-        )
+    async def list_all(self, limit: int = 50, offset: int = 0, status: Optional[str] = None) -> list[User]:
+        query = select(UserModel).order_by(UserModel.created_at.desc()).limit(limit).offset(offset)
+        if status:
+            query = query.where(UserModel.status == status)
+        result = await self._session.execute(query)
         return [_to_entity(row) for row in result.scalars().all()]
 
-    async def count_all(self) -> int:
-        result = await self._session.execute(
-            select(func.count()).select_from(UserModel)
+    async def count_all(self, status: Optional[str] = None) -> int:
+        query = select(func.count()).select_from(UserModel)
+        if status:
+            query = query.where(UserModel.status == status)
+        return (await self._session.execute(query)).scalar_one()
+
+    async def approve(self, user_id: str, approved_by: str, at: datetime) -> None:
+        await self._session.execute(
+            update(UserModel)
+            .where(UserModel.id == _as_uuid(user_id))
+            .values(status="active", approved_at=at, approved_by=_as_uuid(approved_by), updated_at=at)
         )
-        return result.scalar_one()
+
+    async def replace_permissions(self, user_id: str, permission_ids: list, granted_by: Optional[str]) -> None:
+        """Keeps the grant date of permissions the user already had; only new ones get granted_by."""
+        uid = _as_uuid(user_id)
+        wanted = {_as_uuid(p) for p in permission_ids}
+        current = set((await self._session.execute(
+            select(user_permissions.c.permission_id).where(user_permissions.c.user_id == uid)
+        )).scalars().all())
+        if current - wanted:
+            await self._session.execute(
+                user_permissions.delete().where(
+                    user_permissions.c.user_id == uid,
+                    user_permissions.c.permission_id.in_(current - wanted),
+                )
+            )
+        for pid in wanted - current:
+            await self._session.execute(
+                user_permissions.insert().values(user_id=uid, permission_id=pid, granted_by=_as_uuid(granted_by))
+            )
+        # The ORM relationship cached on this session must not hide the change.
+        orm = await self._session.get(UserModel, uid)
+        if orm is not None:
+            await self._session.refresh(orm, ["permissions"])
 
     # --- Refresh tokens ---
 
@@ -204,6 +233,7 @@ class UserRepository(BaseRepository, IUserRepository):
         family_id: Optional[Union[str, uuid.UUID]] = None,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
+        amr: str = "pwd",
     ) -> RefreshTokenModel:
         token = RefreshTokenModel(
             id=uuid.uuid4(),
@@ -213,6 +243,7 @@ class UserRepository(BaseRepository, IUserRepository):
             application_id=_as_uuid(application_id),
             ip_address=ip_address,
             user_agent=user_agent,
+            amr=amr,
         )
         token.family_id = _as_uuid(family_id) if family_id else token.id
         self._session.add(token)

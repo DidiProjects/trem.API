@@ -1,6 +1,6 @@
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 from app.domain.entities.permission import APPLICATION_SLUG_PATTERN, TREM_APP
 
@@ -25,11 +25,57 @@ class LoginRequest(BaseModel):
 
 
 class TokenResponse(BaseModel):
-    access_token: str
+    """
+    Either the tokens, or (mfa_required) a short-lived mfa_token to send with the code
+    to /auth/mfa/verify.
+    """
+
+    access_token: Optional[str] = None
     refresh_token: Optional[str] = None
-    token_type: str = "bearer"
-    expires_in: int
-    must_change_password: bool
+    token_type: Optional[str] = "bearer"
+    expires_in: Optional[int] = None
+    must_change_password: Optional[bool] = None
+    mfa_required: Optional[bool] = None
+    mfa_token: Optional[str] = None
+
+
+class MfaVerifyRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    mfa_token: str = Field(min_length=1)
+    code: Optional[str] = Field(default=None, max_length=10)
+    recovery_code: Optional[str] = Field(default=None, max_length=20)
+    session: Literal["body", "cookie"] = "body"
+
+    @model_validator(mode="after")
+    def one_of(self):
+        if bool(self.code) == bool(self.recovery_code):
+            raise ValueError("Envie code ou recovery_code")
+        return self
+
+
+class PasswordConfirmation(BaseModel):
+    password: str = Field(min_length=1, max_length=PASSWORD_MAX_LENGTH)
+
+
+class MfaCodeRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    code: str = Field(min_length=6, max_length=10)
+
+
+class MfaDisableRequest(PasswordConfirmation):
+    code: str = Field(min_length=6, max_length=20, description="Código TOTP ou de recuperação")
+
+
+class MfaEnrollResponse(BaseModel):
+    secret: str
+    otpauth_uri: str
+
+
+class RecoveryCodesResponse(BaseModel):
+    recovery_codes: list[str]
+    warning: str = "Guarde estes códigos agora: cada um vale uma vez e eles não podem ser vistos de novo."
 
 
 class RefreshRequest(BaseModel):

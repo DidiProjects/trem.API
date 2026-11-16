@@ -14,18 +14,26 @@ from app.infrastructure.database.connection import get_db
 from app.infrastructure.database.models import ApplicationModel, Base, PermissionModel, UserModel
 from app.domain.entities.permission import TremPermission
 from app.main import app
-from tests.conftest import TEST_API_KEY
+from app.core.security import create_access_token
 
-MASTER = {"X-API-Key": TEST_API_KEY}
+# The admin credential travels as the client's default Authorization header (see `http`).
+MASTER: dict = {}
 
 
 @pytest.fixture
-def http(db_session, seeded_permissions):
+async def http(db_session, seeded_permissions):
+    admin_permission = await db_session.get(PermissionModel, uuid.UUID(seeded_permissions["trem:admin"]))
+    admin = UserModel(username="chefe", password_hash="x", status="active",
+                      must_change_password=False, permissions=[admin_permission])
+    db_session.add(admin)
+    await db_session.flush()
+    token = create_access_token(str(admin.id), "chefe", ["trem:admin"], False, amr=("pwd", "otp"))
+
     async def _db():
         yield db_session
 
     app.dependency_overrides[get_db] = _db
-    yield TestClient(app)
+    yield TestClient(app, headers={"Authorization": f"Bearer {token}"})
     app.dependency_overrides.clear()
 
 
@@ -97,9 +105,19 @@ class TestCreate:
         )
         assert response.status_code == 422
 
-    def test_requires_master_key(self, http):
+    def test_requires_an_admin_login(self, http):
         body = {"name": "x", "permissions": ["trem:ai"]}
-        assert http.post("/admin/clients", json=body).status_code == 401
+        assert http.post("/admin/clients", json=body, headers={"Authorization": ""}).status_code == 401
+
+    def test_master_key_no_longer_administers(self, http):
+        from tests.conftest import TEST_API_KEY
+
+        response = http.post(
+            "/admin/clients",
+            json={"name": "x", "permissions": ["trem:ai"]},
+            headers={"Authorization": "", "X-API-Key": TEST_API_KEY},
+        )
+        assert response.status_code == 401
 
     def test_issued_key_cannot_administer(self, http):
         issued = http.post(
@@ -107,10 +125,10 @@ class TestCreate:
         ).json()["api_key"]
         response = http.post(
             "/admin/clients",
-            headers={"X-API-Key": issued},
+            headers={"X-API-Key": issued, "Authorization": ""},
             json={"name": "y", "permissions": ["trem:ai"]},
         )
-        assert response.status_code == 403
+        assert response.status_code == 401
 
 
 class TestReadBack:

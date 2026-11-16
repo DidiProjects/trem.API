@@ -37,6 +37,13 @@ class User:
     email_verified_at: Optional[datetime] = None
     approved_at: Optional[datetime] = None
     approved_by: Optional[str] = None
+    totp_enabled: bool = False
+    # Filled from the access token that authenticated this request: how the login was proven.
+    amr: tuple[str, ...] = ()
+
+    @property
+    def is_admin(self) -> bool:
+        return "trem:admin" in self.permissions
 
     @property
     def is_active(self) -> bool:

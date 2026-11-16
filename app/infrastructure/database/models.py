@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     Column,
@@ -167,6 +168,12 @@ class UserModel(Base):
     approved_by: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+    # AES-256-GCM ciphertext; the key lives outside the database (MFA_ENCRYPTION_KEY).
+    totp_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
+    totp_enabled_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    totp_last_step: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
     permissions: Mapped[list["PermissionModel"]] = relationship(
         "PermissionModel",
@@ -180,6 +187,9 @@ class UserModel(Base):
     )
     email_tokens: Mapped[list["EmailTokenModel"]] = relationship(
         "EmailTokenModel", cascade="all, delete-orphan", passive_deletes=True
+    )
+    recovery_codes: Mapped[list["RecoveryCodeModel"]] = relationship(
+        "RecoveryCodeModel", cascade="all, delete-orphan", passive_deletes=True
     )
 
     def __repr__(self) -> str:  # sem password_hash — não vaza credencial em log
@@ -236,6 +246,28 @@ class ApiClientModel(Base):
             f"ApiClientModel(id={self.id!r}, name={self.name!r}, "
             f"revoked={self.revoked!r})"
         )
+
+
+class RecoveryCodeModel(Base):
+    __tablename__ = "mfa_recovery_codes"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, default=_now, server_default=func.now()
+    )
+
+    def __repr__(self) -> str:  # sem code_hash
+        return f"RecoveryCodeModel(id={self.id!r}, used={self.used_at is not None})"
 
 
 class EmailTokenModel(Base):
@@ -306,6 +338,8 @@ class RefreshTokenModel(Base):
         ForeignKey("applications.id", ondelete="CASCADE"),
         nullable=False,
     )
+    # How the login was proven ("pwd" or "pwd otp"); refreshed tokens keep it.
+    amr: Mapped[str] = mapped_column(String(20), nullable=False, default="pwd", server_default="pwd")
 
     user: Mapped["UserModel"] = relationship("UserModel", back_populates="refresh_tokens")
     application: Mapped["ApplicationModel"] = relationship("ApplicationModel", lazy="joined")

@@ -87,6 +87,31 @@ class ApplicationAccessDeniedError(AppException):
         super().__init__("Sem acesso a esta aplicação", status_code=403)
 
 
+class MfaNotConfiguredError(AppException):
+    def __init__(self):
+        super().__init__("Segundo fator indisponível neste servidor", status_code=503)
+
+
+class InvalidMfaCodeError(AppException):
+    def __init__(self):
+        super().__init__("Código inválido", status_code=401)
+
+
+class MfaStateError(AppException):
+    def __init__(self, message: str):
+        super().__init__(message, status_code=409)
+
+
+class ConflictError(AppException):
+    def __init__(self, message: str):
+        super().__init__(message, status_code=409)
+
+
+class NotFoundError(AppException):
+    def __init__(self, message: str):
+        super().__init__(message, status_code=404)
+
+
 class InsufficientPermissionsError(AppException):
     def __init__(self):
         super().__init__("Permissão insuficiente para este recurso", status_code=403)

@@ -146,6 +146,31 @@ def create_access_token(
     )
 
 
+# Not a valid application slug, so no application can ever be issued a token with it.
+MFA_AUDIENCE = "trem#mfa"
+
+
+def create_mfa_token(user_id: str, audience: str) -> str:
+    """
+    Proof that the password was right, valid for a few minutes and only for the second
+    step of that login: it opens no route, and it remembers which application asked.
+    """
+    settings = get_settings()
+    now = datetime.now(timezone.utc)
+    payload = {
+        "iss": settings.jwt_issuer(),
+        "aud": MFA_AUDIENCE,
+        "sub": user_id,
+        "app": audience,
+        "jti": uuid.uuid4().hex,
+        "iat": now,
+        "exp": now + timedelta(minutes=settings.MFA_CHALLENGE_MINUTES),
+        "type": "mfa",
+    }
+    kid = public_jwk(settings.jwt_public_key_pem())["kid"]
+    return jwt.encode(payload, settings.jwt_private_key_pem(), algorithm=settings.JWT_ALGORITHM, headers={"kid": kid})
+
+
 def generate_refresh_token() -> str:
     """Opaque 256-bit token: only its SHA-256 is stored, and it means nothing outside the database."""
     return secrets.token_urlsafe(32)

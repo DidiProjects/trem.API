@@ -447,6 +447,43 @@ class TestAppOnMigratedSchema:
         assert sql("SELECT status, email FROM users WHERE username = 'nova'") == [("pending_approval", "nova@example.com")]
         assert [k["to"] for name, k in sent if name == "send_signup_pending_approval"] == ["chefe@example.com"]
 
+    def test_totp_replay_and_recovery_codes_on_postgres(self, alembic_cfg, monkeypatch):
+        import base64
+        import secrets
+        import time
+
+        from app.core import totp
+        from app.repositories.user_repository import UserRepository
+        from app.services.mfa_service import MfaService
+        from app.services.rate_limit import SlidingWindowLimiter
+
+        command.upgrade(alembic_cfg, "head")
+        monkeypatch.setattr(get_settings(), "MFA_ENCRYPTION_KEY", base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())
+        from app.core.security import hash_password
+        uid = uuid.uuid4()
+        sql(
+            "INSERT INTO users (id, username, password_hash, status) VALUES (:id, 'ana', :h, 'active')",
+            id=uid, h=hash_password("cavalo bateria grampo"),
+        )
+        limiter = SlidingWindowLimiter(100, 60)
+
+        async def enroll(session):
+            user = await UserRepository(session).get_by_id(str(uid))
+            secret, _ = await MfaService(session, limiter).enroll(user, "cavalo bateria grampo")
+            codes = await MfaService(session, limiter).confirm(user, totp.code_at(secret, time.time()))
+            return secret, codes
+
+        secret, codes = self.run(enroll)
+        code = totp.code_at(secret, time.time() + 30)
+
+        async def check(session, **kwargs):
+            return await MfaService(session, limiter).check(str(uid), **kwargs)
+
+        assert self.run(lambda s: check(s, code=code)) is True
+        assert self.run(lambda s: check(s, code=code)) is False
+        assert self.run(lambda s: check(s, recovery_code=codes[0])) is True
+        assert self.run(lambda s: check(s, recovery_code=codes[0])) is False
+
 class TestUpgrade006:
     def test_existing_tokens_become_single_token_families_of_trem(self, alembic_cfg):
         command.upgrade(alembic_cfg, "005")
@@ -513,3 +550,31 @@ class TestUpgrade007:
         command.downgrade(alembic_cfg, "006")
         assert dict(sql("SELECT username, status FROM users")) == {"a": "active", "p": "blocked", "r": "blocked"}
         command.upgrade(alembic_cfg, "007")
+
+
+class TestUpgrade008:
+    def test_existing_sessions_are_password_only(self, alembic_cfg):
+        command.upgrade(alembic_cfg, "007")
+        uid = uuid.uuid4()
+        sql("INSERT INTO users (id, username, password_hash) VALUES (:id, 'u', 'x')", id=uid)
+        sql(
+            "INSERT INTO refresh_tokens (user_id, token_hash, expires_at, family_id, application_id) "
+            "SELECT :u, 'h', now() + interval '1 day', gen_random_uuid(), id FROM applications",
+            u=uid,
+        )
+        command.upgrade(alembic_cfg, "008")
+        assert sql("SELECT amr FROM refresh_tokens") == [("pwd",)]
+        assert sql("SELECT totp_secret, totp_enabled_at FROM users") == [(None, None)]
+
+    def test_recovery_codes_go_with_the_user(self, alembic_cfg):
+        command.upgrade(alembic_cfg, "008")
+        uid = uuid.uuid4()
+        sql("INSERT INTO users (id, username, password_hash) VALUES (:id, 'u', 'x')", id=uid)
+        sql("INSERT INTO mfa_recovery_codes (user_id, code_hash) VALUES (:u, :h)", u=uid, h="c" * 64)
+        sql("DELETE FROM users WHERE id = :id", id=uid)
+        assert sql("SELECT count(*) FROM mfa_recovery_codes")[0][0] == 0
+
+    def test_round_trip(self, alembic_cfg):
+        command.upgrade(alembic_cfg, "008")
+        command.downgrade(alembic_cfg, "007")
+        command.upgrade(alembic_cfg, "008")
