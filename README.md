@@ -158,6 +158,22 @@ After each deploy, check uploads through Cloudflare and the reverse proxy (skipp
 SMOKE_API_URL=https://api.didilv93.com SMOKE_API_KEY=... pytest tests/test_deployed_uploads.py -v
 ```
 
+## Postman
+
+`postman/collections/trem-api.json` has every route, grouped by area, and
+`postman/environments/` has `local` and `prod`. Import both, fill `username` and `password`
+in the environment (and `apiKey`, optionally), then run `Auth › POST /auth/login`: the
+tokens are stored as collection variables, and `POST /auth/mfa/verify` takes over when TOTP
+is on. When `apiKey` is set, the tool routes also send `X-API-Key`, which the API prefers;
+`/auth`, `/me` and `/admin` always use the login.
+
+The collection is generated from the OpenAPI; after changing routes, regenerate it
+(`tests/test_postman_collection.py` fails while it is stale):
+
+```bash
+python -m scripts.build_postman_collection
+```
+
 ## Endpoints
 
 Endpoints authenticate with `X-API-Key: trem_...` or `Authorization: Bearer <access token>`.

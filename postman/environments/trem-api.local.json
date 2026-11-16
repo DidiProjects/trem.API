@@ -1,0 +1,11 @@
+{
+  "name": "trem.API — local",
+  "values": [
+    { "key": "baseUrl", "value": "http://localhost:3002", "enabled": true },
+    { "key": "username", "value": "", "enabled": true },
+    { "key": "password", "value": "", "type": "secret", "enabled": true },
+    { "key": "audience", "value": "trem", "enabled": true },
+    { "key": "apiKey", "value": "", "type": "secret", "enabled": true }
+  ],
+  "_postman_variable_scope": "environment"
+}
