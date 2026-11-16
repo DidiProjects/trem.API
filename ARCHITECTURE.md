@@ -264,7 +264,7 @@ velho deixado pelo browser derrubaria com 401 uma chamada legítima por chave.
 | Hash de senha   | **Argon2id**       | Vencedor do PHC, recomendado pelo OWASP             |
 | Algoritmo JWT   | **RS256**          | Assimétrico: outros serviços verificam sem a chave privada |
 | Biblioteca JWT  | **PyJWT**          | Mantida ativamente, RS256 completo; substituiu python-jose (semi-abandonada, CVE-2024-33663/33664) |
-| Hash de refresh token | SHA-256 | Token raw não fica no banco                    |
+| Refresh token   | 256 bits opacos, SHA-256 no banco | Rotação a cada uso, com detecção de reuso |
 
 ### Parâmetros Argon2id (OWASP recomendado)
 
@@ -276,12 +276,16 @@ parallelism  = 4 threads
 
 ### Estrutura dos tokens
 
-**Access token (15 min):**
+**Access token (15 min)**, emitido para uma aplicação (`aud`), com header `kid`:
 ```json
 {
+  "iss": "https://api.didilv93.com",
+  "aud": "trem",
   "sub": "uuid-do-usuario",
+  "jti": "id-unico",
   "username": "nome_usuario",
   "perms": ["trem:ai", "trem:file_editor"],
+  "amr": ["pwd"],
   "must_change_password": false,
   "iat": 1234567890,
   "exp": 1234567890,
@@ -289,16 +293,51 @@ parallelism  = 4 threads
 }
 ```
 
-**Refresh token (7 dias):**
-```json
-{
-  "sub": "uuid-do-usuario",
-  "jti": "uuid-unico-do-token",
-  "iat": 1234567890,
-  "exp": 1234567890,
-  "type": "refresh"
-}
-```
+`perms` traz só as permissões daquela aplicação: um token emitido para `financas`
+não abre a trem.API (o `aud` é conferido) nem revela o que o usuário tem em outras.
+
+**Refresh token (7 dias):** opaco, 256 bits aleatórios. O banco guarda só o SHA-256.
+
+- **Rotação**: cada `/auth/refresh` devolve um par novo e revoga o token usado, que
+  passa a apontar para o sucessor (`replaced_by`). Os tokens de um mesmo login
+  dividem a `family_id`.
+- **Detecção de reuso**: um token já trocado que volta a ser usado significa que
+  alguém tem uma cópia. A família inteira é revogada, inclusive o token mais novo
+  do dono legítimo, que precisa logar de novo. Dois refreshes simultâneos com o
+  mesmo token contam como reuso (o "claim" é um `UPDATE ... WHERE revoked = false`).
+- **Ligado à aplicação**: o refresh só emite tokens para a aplicação do login. Perder
+  todas as permissões nela, ou ser bloqueado, encerra o login no próximo refresh.
+- **Logout** encerra o login inteiro (a família), não só o token apresentado.
+
+### Verificação por outras aplicações (JWKS)
+
+`GET /.well-known/jwks.json` publica a chave pública de assinatura. Outra aplicação
+valida o token localmente, sem chamar a trem.API: assinatura RS256 pela chave do
+`kid`, `iss` igual ao da trem.API, `aud` igual ao próprio slug, `exp`. O `kid` é o
+thumbprint RFC 7638 da chave.
+
+Troca de chave sem derrubar ninguém: a chave antiga vai para `JWT_EXTRA_PUBLIC_KEYS`
+(separadas por `|||`) enquanto seus tokens vivem (15 min), e sai depois.
+
+### Sessão do navegador
+
+Com `"session": "cookie"` no login, o refresh vai num cookie `trem_refresh`
+`HttpOnly; Secure; SameSite=Strict; Path=/auth`, fora do alcance do JavaScript, e
+o access token fica só em memória. `/auth/refresh` e `/auth/logout` sem corpo leem
+o cookie e exigem o header `X-Requested-With: trem`: um formulário de outro site
+não envia header próprio, e um `fetch` de outra origem que envie é barrado no preflight.
+
+Sem `session`, o refresh volta no corpo (aplicações, scripts, outros fronts).
+
+### Limite de tentativas de login
+
+Em memória (processo único), janela deslizante de `LOGIN_FAILURE_WINDOW_SECONDS` (15 min):
+`LOGIN_MAX_FAILURES_PER_USERNAME` (5) por username e `LOGIN_MAX_FAILURES_PER_IP` (20) por IP.
+Acima disso, 429 com `Retry-After`. O username conta mesmo quando não existe, para o
+bloqueio não revelar quais contas existem; pelo mesmo motivo, login de usuário
+inexistente roda uma verificação Argon2id contra um hash descartável e leva o mesmo
+tempo que uma senha errada. O IP vem de `CF-Connecting-IP`, que o Cloudflare
+sobrescreve; o primeiro item do `X-Forwarded-For` é escolhido pelo cliente.
 
 ---
 
@@ -345,10 +384,11 @@ parallelism  = 4 threads
 
 | Método | Path                    | Auth       | Descrição                        |
 |--------|-------------------------|------------|----------------------------------|
-| POST   | `/auth/login`           | Público    | Login, retorna par de tokens     |
-| POST   | `/auth/refresh`         | Bearer     | Renova access token              |
+| POST   | `/auth/login`           | Público    | Login; `audience` (padrão `trem`) e `session` (`body` ou `cookie`) |
+| POST   | `/auth/refresh`         | Refresh    | Novo par de tokens (corpo ou cookie + `X-Requested-With`) |
 | POST   | `/auth/change-password` | Bearer     | Altera senha (obrigatório no 1º acesso) |
-| POST   | `/auth/logout`          | Bearer     | Revoga refresh token             |
+| POST   | `/auth/logout`          | Refresh    | Encerra o login (corpo ou cookie + `X-Requested-With`) |
+| GET    | `/.well-known/jwks.json`| Público    | Chaves públicas para validar os tokens |
 
 ### Users (`/users`) — Admin
 

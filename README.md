@@ -86,10 +86,12 @@ app/
 - Limit of 20 files per merge
 
 ### Authentication
-- API Key with timing-safe comparison
-- Rate limiting (100 req/min per IP)
-- Blocking after 10 failed attempts (5 min)
-- Authentication attempt logging
+- Per-client API keys (`X-API-Key: trem_...`), 256-bit, stored as SHA-256
+- User login with Argon2id passwords and RS256 access tokens (15 min) per application
+- Opaque refresh tokens (7 days), rotated on every use; reuse of a rotated token ends the login
+- Browser sessions keep the refresh token in an `HttpOnly; Secure; SameSite=Strict` cookie
+- Login throttling per username and per IP, with the same answer for unknown users
+- Public keys at `/.well-known/jwks.json` so other applications verify tokens locally
 
 ## Requirements
 
@@ -152,7 +154,23 @@ SMOKE_API_URL=https://api.didilv93.com SMOKE_API_KEY=... pytest tests/test_deplo
 
 ## Endpoints
 
-All endpoints require the `X-API-Key` header.
+Endpoints authenticate with `X-API-Key: trem_...` or `Authorization: Bearer <access token>`.
+
+### Auth
+```
+POST /auth/login            {"username", "password", "audience": "trem", "session": "body" | "cookie"}
+POST /auth/refresh          {"refresh_token"}  or the session cookie + X-Requested-With: trem
+POST /auth/logout           {"refresh_token"}  or the session cookie + X-Requested-With: trem
+POST /auth/change-password  {"current_password", "new_password"}  (Bearer)
+GET  /.well-known/jwks.json
+```
+
+Login and refresh answer `{"access_token", "refresh_token", "token_type", "expires_in",
+"must_change_password"}`; with the cookie session, `refresh_token` is left out of the body.
+Every refresh returns a new refresh token: keep the newest one, the old one is dead.
+
+Other applications verify the access token with the JWKS: RS256, `iss` = this API's URL,
+`aud` = their own slug. `perms` lists only that application's permissions.
 
 ### Health Check
 ```
