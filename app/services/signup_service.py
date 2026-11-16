@@ -12,6 +12,7 @@ from app.domain.entities.permission import TremPermission
 from app.domain.entities.user import User, UserStatus
 from app.repositories.email_token_repository import VERIFY_EMAIL, EmailTokenRepository
 from app.repositories.user_repository import UserRepository
+from app.services.breached_password import ensure_not_breached
 from app.services.rate_limit import SlidingWindowLimiter
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,7 @@ class SignupService:
             raise SignupDisabledError()
         self._limiter.hit(f"signup:{ip}")
         email = email.strip().lower()
+        await ensure_not_breached(password)
 
         # Hashed before looking anything up, so both paths cost the same Argon2id time.
         password_hash = hash_password(password)

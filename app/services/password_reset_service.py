@@ -9,6 +9,7 @@ from app.domain.entities.user import User, UserStatus
 from app.domain.password_policy import check_password
 from app.repositories.email_token_repository import RESET_PASSWORD, EmailTokenRepository
 from app.repositories.user_repository import UserRepository
+from app.services.breached_password import ensure_not_breached
 from app.services.login_throttle import get_login_throttle
 from app.services.rate_limit import SlidingWindowLimiter
 from app.services.signup_service import Outbox, get_signup_limiter
@@ -81,6 +82,7 @@ class PasswordResetService:
         except ValueError as e:
             # Checked before the token is spent: a rejected password does not burn the link.
             raise WeakPasswordError(str(e))
+        await ensure_not_breached(new_password)
 
         if not await self._tokens.use(token.id, now):
             raise InvalidEmailTokenError()

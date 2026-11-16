@@ -146,6 +146,12 @@ docker run -d --name trem-test-pg -e POSTGRES_PASSWORD=test -e POSTGRES_DB=trem_
 TEST_DATABASE_URL=postgresql+asyncpg://postgres:test@127.0.0.1:55432/trem_test pytest tests/test_migrations.py -v
 ```
 
+The breached-password check against the real Have I Been Pwned (skipped without the variable):
+
+```bash
+PWNED_NETWORK_TEST=1 pytest tests/test_breached_password.py -v
+```
+
 After each deploy, check uploads through Cloudflare and the reverse proxy (skipped without the variables):
 
 ```bash
@@ -214,7 +220,9 @@ DELETE /admin/applications/{slug}[/permissions/{name}]
 Sign-up: the account waits for e-mail confirmation, then for an admin to approve it and
 grant permissions. `register`, `resend-verification` and `forgot-password` answer the same
 whether or not the e-mail or username exists. A reset link lasts 60 minutes, works once, ends
-every session, and leaves TOTP on. Passwords: 12 to 128 characters, no composition rules, must not
+every session, and leaves TOTP on. New passwords found in known breaches (Have I Been Pwned,
+k-anonymity: only 5 characters of the SHA-1 leave the server) are refused with 422; if the
+service does not answer, the password is accepted. Passwords: 12 to 128 characters, no composition rules, must not
 contain the username or e-mail.
 
 Login and refresh answer `{"access_token", "refresh_token", "token_type", "expires_in",

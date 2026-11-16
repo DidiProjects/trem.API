@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     # A reset link is a password in transit: short-lived, single use, replaced by the next one.
     PASSWORD_RESET_TTL_MINUTES: int = 60
 
+    # New passwords are checked against Have I Been Pwned; only a 5-character SHA-1 prefix
+    # leaves the server. If the service does not answer in time, the password is accepted.
+    PWNED_PASSWORDS_ENABLED: bool = True
+    PWNED_PASSWORDS_URL: str = "https://api.pwnedpasswords.com"
+    PWNED_PASSWORDS_TIMEOUT: float = 3.0
+
     # Browser session: the refresh token lives in an HttpOnly cookie scoped to /auth.
     REFRESH_COOKIE_NAME: str = "trem_refresh"
     COOKIE_SECURE: bool = True
