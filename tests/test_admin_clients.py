@@ -11,8 +11,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.infrastructure.database.connection import get_db
-from app.infrastructure.database.models import Base, ProfileModel, UserModel
-from app.domain.entities.profile import ProfileName
+from app.infrastructure.database.models import ApplicationModel, Base, PermissionModel, UserModel
+from app.domain.entities.permission import TremPermission
 from app.main import app
 from tests.conftest import TEST_API_KEY
 
@@ -20,7 +20,7 @@ MASTER = {"X-API-Key": TEST_API_KEY}
 
 
 @pytest.fixture
-def http(db_session, seeded_profiles):
+def http(db_session, seeded_permissions):
     async def _db():
         yield db_session
 
@@ -29,12 +29,12 @@ def http(db_session, seeded_profiles):
     app.dependency_overrides.clear()
 
 
-async def _owner(db_session, seeded_profiles, *names, status="active"):
-    profiles = [await db_session.get(ProfileModel, uuid.UUID(seeded_profiles[n])) for n in names]
+async def _owner(db_session, seeded_permissions, *names, status="active"):
+    profiles = [await db_session.get(PermissionModel, uuid.UUID(seeded_permissions[n])) for n in names]
     orm = UserModel(
         username=f"owner-{uuid.uuid4().hex[:6]}",
         password_hash="x",
-        profiles=profiles,
+        permissions=profiles,
         status=status,
         must_change_password=False,
     )
@@ -48,67 +48,67 @@ class TestCreate:
         response = http.post(
             "/admin/clients",
             headers=MASTER,
-            json={"name": "multi", "profile_names": ["file_editor", "ai", "ai"]},
+            json={"name": "multi", "permissions": ["trem:file_editor", "trem:ai", "trem:ai"]},
         )
         assert response.status_code == 201
         body = response.json()
-        assert body["profile_names"] == ["ai", "file_editor"]
+        assert body["permissions"] == ["trem:ai", "trem:file_editor"]
         assert body["user_id"] is None
         assert body["api_key"].startswith("trem_")
 
-    async def test_owned_key(self, http, db_session, seeded_profiles):
-        owner = await _owner(db_session, seeded_profiles, "ai", "linkedin_scraper")
+    async def test_owned_key(self, http, db_session, seeded_permissions):
+        owner = await _owner(db_session, seeded_permissions, "trem:ai", "trem:linkedin_scraper")
         response = http.post(
             "/admin/clients",
             headers=MASTER,
-            json={"name": "mine", "profile_names": ["linkedin_scraper"], "user_id": owner},
+            json={"name": "mine", "permissions": ["trem:linkedin_scraper"], "user_id": owner},
         )
         assert response.status_code == 201
         assert response.json()["user_id"] == owner
 
-    async def test_key_beyond_owner_profiles_is_400(self, http, db_session, seeded_profiles):
-        owner = await _owner(db_session, seeded_profiles, "ai")
+    async def test_key_beyond_owner_profiles_is_400(self, http, db_session, seeded_permissions):
+        owner = await _owner(db_session, seeded_permissions, "trem:ai")
         response = http.post(
             "/admin/clients",
             headers=MASTER,
-            json={"name": "escalate", "profile_names": ["ai", "linkedin_scraper"], "user_id": owner},
+            json={"name": "escalate", "permissions": ["trem:ai", "trem:linkedin_scraper"], "user_id": owner},
         )
         assert response.status_code == 400
-        assert "linkedin_scraper" in response.json()["detail"]
+        assert "trem:linkedin_scraper" in response.json()["detail"]
 
     def test_unknown_owner_is_400(self, http):
         response = http.post(
             "/admin/clients",
             headers=MASTER,
-            json={"name": "orphan", "profile_names": ["ai"], "user_id": str(uuid.uuid4())},
+            json={"name": "orphan", "permissions": ["trem:ai"], "user_id": str(uuid.uuid4())},
         )
         assert response.status_code == 400
 
-    @pytest.mark.parametrize("profiles", [[], ["admin"], "ai"])
-    def test_invalid_profiles_are_422(self, http, profiles):
+    @pytest.mark.parametrize("profiles", [[], ["admin"], "trem:ai", ["Trem:ai"]])
+    def test_invalid_permissions_are_422(self, http, profiles):
         response = http.post(
-            "/admin/clients", headers=MASTER, json={"name": "bad", "profile_names": profiles}
+            "/admin/clients", headers=MASTER, json={"name": "bad", "permissions": profiles}
         )
         assert response.status_code == 422
 
     def test_old_single_profile_payload_is_422(self, http):
         response = http.post(
-            "/admin/clients", headers=MASTER, json={"name": "old", "profile_name": "ai"}
+            "/admin/clients", headers=MASTER, json={"name": "old", "profile_name": "trem:ai"}
         )
         assert response.status_code == 422
 
     def test_requires_master_key(self, http):
-        body = {"name": "x", "profile_names": ["ai"]}
+        body = {"name": "x", "permissions": ["trem:ai"]}
         assert http.post("/admin/clients", json=body).status_code == 401
 
     def test_issued_key_cannot_administer(self, http):
         issued = http.post(
-            "/admin/clients", headers=MASTER, json={"name": "app", "profile_names": ["ai"]}
+            "/admin/clients", headers=MASTER, json={"name": "app", "permissions": ["trem:ai"]}
         ).json()["api_key"]
         response = http.post(
             "/admin/clients",
             headers={"X-API-Key": issued},
-            json={"name": "y", "profile_names": ["ai"]},
+            json={"name": "y", "permissions": ["trem:ai"]},
         )
         assert response.status_code == 403
 
@@ -116,15 +116,15 @@ class TestCreate:
 class TestReadBack:
     def test_list_and_get_show_profiles_and_owner(self, http):
         created = http.post(
-            "/admin/clients", headers=MASTER, json={"name": "app", "profile_names": ["ai", "file_editor"]}
+            "/admin/clients", headers=MASTER, json={"name": "app", "permissions": ["trem:ai", "trem:file_editor"]}
         ).json()
 
         listed = http.get("/admin/clients", headers=MASTER).json()["items"]
-        assert [(c["name"], c["profile_names"], c["user_id"]) for c in listed] == [
-            ("app", ["ai", "file_editor"], None)
+        assert [(c["name"], c["permissions"], c["user_id"]) for c in listed] == [
+            ("app", ["trem:ai", "trem:file_editor"], None)
         ]
         one = http.get(f"/admin/clients/{created['id']}", headers=MASTER).json()
-        assert one["profile_names"] == ["ai", "file_editor"]
+        assert one["permissions"] == ["trem:ai", "trem:file_editor"]
         assert "api_key" not in one
 
 
@@ -135,20 +135,20 @@ class TestIssuedKeyEndToEnd:
         return http.post(
             "/admin/clients",
             headers=MASTER,
-            json={"name": f"k-{uuid.uuid4().hex[:6]}", "profile_names": profiles, **extra},
+            json={"name": f"k-{uuid.uuid4().hex[:6]}", "permissions": profiles, **extra},
         ).json()["api_key"]
 
     def test_ai_key_reaches_llm(self, http):
-        key = self._key(http, ["ai"])
+        key = self._key(http, ["trem:ai"])
         assert http.get("/llm/health", headers={"X-API-Key": key}).status_code == 503
 
     def test_key_without_ai_is_403_on_llm(self, http):
-        key = self._key(http, ["file_editor", "linkedin_scraper"])
+        key = self._key(http, ["trem:file_editor", "trem:linkedin_scraper"])
         assert http.get("/llm/health", headers={"X-API-Key": key}).status_code == 403
 
-    async def test_suspending_owner_turns_key_into_401(self, http, db_session, seeded_profiles):
-        owner = await _owner(db_session, seeded_profiles, "ai")
-        key = self._key(http, ["ai"], user_id=owner)
+    async def test_suspending_owner_turns_key_into_401(self, http, db_session, seeded_permissions):
+        owner = await _owner(db_session, seeded_permissions, "trem:ai")
+        key = self._key(http, ["trem:ai"], user_id=owner)
         assert http.get("/llm/health", headers={"X-API-Key": key}).status_code == 503
 
         user = await db_session.get(UserModel, uuid.UUID(owner))
@@ -157,19 +157,19 @@ class TestIssuedKeyEndToEnd:
 
         assert http.get("/llm/health", headers={"X-API-Key": key}).status_code == 401
 
-    async def test_removing_ai_from_owner_turns_key_into_403(self, http, db_session, seeded_profiles):
-        owner = await _owner(db_session, seeded_profiles, "ai", "file_editor")
-        key = self._key(http, ["ai"], user_id=owner)
+    async def test_removing_ai_from_owner_turns_key_into_403(self, http, db_session, seeded_permissions):
+        owner = await _owner(db_session, seeded_permissions, "trem:ai", "trem:file_editor")
+        key = self._key(http, ["trem:ai"], user_id=owner)
 
         user = await db_session.get(UserModel, uuid.UUID(owner))
-        user.profiles = [p for p in user.profiles if p.name != "ai"]
+        user.permissions = [p for p in user.permissions if p.key != "trem:ai"]
         await db_session.flush()
 
         assert http.get("/llm/health", headers={"X-API-Key": key}).status_code == 403
 
     def test_revoked_key_is_401(self, http):
         created = http.post(
-            "/admin/clients", headers=MASTER, json={"name": "rev", "profile_names": ["ai"]}
+            "/admin/clients", headers=MASTER, json={"name": "rev", "permissions": ["trem:ai"]}
         ).json()
         http.delete(f"/admin/clients/{created['id']}", headers=MASTER)
         assert http.get("/llm/health", headers={"X-API-Key": created["api_key"]}).status_code == 401
@@ -187,11 +187,15 @@ class TestCli:
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
             async with async_sessionmaker(engine)() as session:
-                profiles = {n.value: ProfileModel(name=n.value) for n in ProfileName}
+                trem = ApplicationModel(slug="trem", name="trem.API")
+                profiles = {
+                    n.value: PermissionModel(application=trem, name=n.value.split(":", 1)[1])
+                    for n in TremPermission
+                }
                 session.add_all(profiles.values())
                 session.add(UserModel(
                     username="diego", password_hash="x", status="active",
-                    profiles=[profiles["ai"], profiles["linkedin_scraper"]],
+                    permissions=[profiles["trem:ai"], profiles["trem:linkedin_scraper"]],
                 ))
                 await session.commit()
             await engine.dispose()
@@ -213,27 +217,27 @@ class TestCli:
     def test_create_with_several_profiles_and_owner(self, cli_db, monkeypatch, capsys):
         code = self.run(
             cli_db, monkeypatch, "create", "diego-key",
-            "--profile", "linkedin_scraper", "--profile", "ai", "--user", "diego",
+            "--permission", "trem:linkedin_scraper", "--permission", "trem:ai", "--user", "diego",
         )
         out = capsys.readouterr().out
         assert code == 0
-        assert "perfis: ai, linkedin_scraper" in out
+        assert "permissões: trem:ai, trem:linkedin_scraper" in out
         assert "trem_" in out
 
         assert self.run(cli_db, monkeypatch, "list") == 0
-        assert "ai,linkedin_scraper" in capsys.readouterr().out
+        assert "trem:ai,trem:linkedin_scraper" in capsys.readouterr().out
 
     def test_unknown_owner_fails(self, cli_db, monkeypatch, capsys):
-        code = self.run(cli_db, monkeypatch, "create", "k", "--profile", "ai", "--user", "ninguem")
+        code = self.run(cli_db, monkeypatch, "create", "k", "--permission", "trem:ai", "--user", "ninguem")
         assert code == 1
         assert "não encontrado" in capsys.readouterr().err
 
     def test_profile_beyond_owner_fails(self, cli_db, monkeypatch, capsys):
         code = self.run(
-            cli_db, monkeypatch, "create", "k", "--profile", "file_editor", "--user", "diego"
+            cli_db, monkeypatch, "create", "k", "--permission", "trem:file_editor", "--user", "diego"
         )
         assert code == 1
-        assert "file_editor" in capsys.readouterr().err
+        assert "trem:file_editor" in capsys.readouterr().err
 
     def test_service_key_without_owner(self, cli_db, monkeypatch, capsys):
-        assert self.run(cli_db, monkeypatch, "create", "svc", "--profile", "file_editor") == 0
+        assert self.run(cli_db, monkeypatch, "create", "svc", "--permission", "trem:file_editor") == 0

@@ -57,9 +57,9 @@ def _as(principal: Principal):
     return TestClient(app)
 
 
-def _principal(profiles=("linkedin_scraper",), user_id=USER_ID, kind=PrincipalKind.CLIENT):
+def _principal(permissions=("trem:linkedin_scraper",), user_id=USER_ID, kind=PrincipalKind.CLIENT):
     return Principal(
-        id="client-1", display_name="k", profile_names=frozenset(profiles), kind=kind, user_id=user_id
+        id="client-1", display_name="k", permissions=frozenset(permissions), kind=kind, user_id=user_id
     )
 
 
@@ -96,9 +96,9 @@ class TestAuthorization:
             app.dependency_overrides.clear()
         assert orchestrator.requests == []
 
-    @pytest.mark.parametrize("profiles", [("ai",), ("file_editor", "airline_company"), ()])
-    def test_requires_linkedin_scraper_profile(self, orchestrator, profiles):
-        http = _as(_principal(profiles))
+    @pytest.mark.parametrize("permissions", [("trem:ai",), ("trem:file_editor", "trem:airline_company"), ()])
+    def test_requires_linkedin_scraper_permission(self, orchestrator, permissions):
+        http = _as(_principal(permissions))
         try:
             for method, path, kwargs in ROUTES:
                 assert getattr(http, method)(path, **kwargs).status_code == 403, path

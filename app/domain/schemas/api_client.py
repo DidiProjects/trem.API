@@ -3,7 +3,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.domain.entities.profile import ProfileName
+from app.domain.entities.permission import split_permission_key
 
 CLIENT_NAME_PATTERN = r"^[a-zA-Z0-9_.-]+$"
 
@@ -17,17 +17,22 @@ class ApiClientCreate(BaseModel):
         pattern=CLIENT_NAME_PATTERN,
         description="Identificador da aplicação, ex: flight-api",
     )
-    profile_names: list[ProfileName] = Field(min_length=1)
+    permissions: list[str] = Field(
+        min_length=1,
+        description="Chaves \"<aplicação>:<permissão>\", ex: trem:ai",
+    )
     description: Optional[str] = Field(default=None, max_length=500)
     user_id: Optional[str] = Field(
         default=None,
-        description="Dono da chave. Os perfis precisam estar entre os dele; "
+        description="Dono da chave. As permissões precisam estar entre as dele; "
         "sem dono, é chave de serviço",
     )
 
-    @field_validator("profile_names")
+    @field_validator("permissions")
     @classmethod
-    def dedupe_profiles(cls, v: list[ProfileName]) -> list[ProfileName]:
+    def validate_permissions(cls, v: list[str]) -> list[str]:
+        for key in v:
+            split_permission_key(key)
         return sorted(set(v))
 
 
@@ -37,7 +42,7 @@ class ApiClientResponse(BaseModel):
     id: str
     name: str
     description: Optional[str]
-    profile_names: list[str]
+    permissions: list[str]
     user_id: Optional[str]
     revoked: bool
     last_used_at: Optional[datetime]

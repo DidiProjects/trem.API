@@ -2,7 +2,7 @@
 
 ## Visão Geral
 
-trem.API é uma plataforma de processamento de arquivos com identidade própria, autenticação segura, controle de perfis e capacidade de integração com serviços externos na mesma rede Docker.
+trem.API é uma plataforma de processamento de arquivos com identidade própria, autenticação segura, permissões por aplicação e capacidade de integração com serviços externos na mesma rede Docker.
 
 ---
 
@@ -38,7 +38,7 @@ app/
 │   │   │   ├── audio.py
 │   │   │   ├── image.py
 │   │   │   └── support.py
-│   │   └── dependencies.py      # get_current_user, require_profile, get_db
+│   │   └── dependencies.py      # get_current_user, require_permission, get_db
 │   └── middleware/
 │       ├── body_size_limit.py   # 413 em JSON por prefixo; o proxy não limita corpo
 │       ├── rate_limit.py
@@ -55,7 +55,7 @@ app/
 ├── domain/
 │   ├── entities/
 │   │   ├── user.py              # Entidade User (pura, sem ORM)
-│   │   └── profile.py
+│   │   └── permission.py        # Application, Permission, TremPermission
 │   └── schemas/
 │       ├── auth.py              # LoginRequest, TokenResponse
 │       ├── user.py              # UserCreate, UserResponse
@@ -110,12 +110,23 @@ scripts/
 ### Schema
 
 ```sql
--- Perfis de acesso
-CREATE TABLE profiles (
+-- Interfaces que autenticam pela trem.API; o slug é o audience do token
+CREATE TABLE applications (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name        VARCHAR(50) UNIQUE NOT NULL,
+    slug        VARCHAR(50) UNIQUE NOT NULL,
+    name        VARCHAR(100) NOT NULL,
     description TEXT,
     created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Permissões de cada aplicação; a chave pública é "<slug>:<name>", ex: trem:ai
+CREATE TABLE permissions (
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    application_id UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+    name           VARCHAR(50) NOT NULL,
+    description    TEXT,
+    created_at     TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (application_id, name)
 );
 
 -- Usuários
@@ -132,16 +143,19 @@ CREATE TABLE users (
     last_login_at                TIMESTAMPTZ
 );
 
--- Perfis de cada usuário e de cada chave: um conjunto, não um só
-CREATE TABLE user_profiles (
-    user_id    UUID REFERENCES users(id) ON DELETE CASCADE,
-    profile_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
-    PRIMARY KEY (user_id, profile_id)
+-- Permissões de cada usuário e de cada chave: um conjunto
+CREATE TABLE user_permissions (
+    user_id       UUID REFERENCES users(id) ON DELETE CASCADE,
+    permission_id UUID REFERENCES permissions(id) ON DELETE CASCADE,
+    granted_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    granted_by    UUID REFERENCES users(id) ON DELETE SET NULL,
+    PRIMARY KEY (user_id, permission_id)
 );
-CREATE TABLE api_client_profiles (
-    client_id  UUID REFERENCES api_clients(id) ON DELETE CASCADE,
-    profile_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
-    PRIMARY KEY (client_id, profile_id)
+CREATE TABLE api_client_permissions (
+    client_id     UUID REFERENCES api_clients(id) ON DELETE CASCADE,
+    permission_id UUID REFERENCES permissions(id) ON DELETE CASCADE,
+    granted_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (client_id, permission_id)
 );
 -- api_clients.user_id: dono da chave (NULL = chave de serviço), ON DELETE CASCADE
 
@@ -160,19 +174,23 @@ CREATE TABLE refresh_tokens (
 
 ### Dados iniciais (seed via Alembic)
 
-```sql
-INSERT INTO profiles (name, description) VALUES
-  ('file_editor',      'Acesso aos serviços de manipulação de arquivos'),
-  ('airline_company',  'Acesso a informações de empresas aéreas'),
-  ('ai',               'Acesso ao modelo de linguagem (/llm)'),          -- 004
-  ('linkedin_scraper', 'Acesso aos jobs de scraping do LinkedIn');      -- 004
-```
+Aplicação `trem` (esta API), com as permissões:
+
+| Chave | Acesso |
+|-------|--------|
+| `trem:file_editor` | Manipulação de arquivos |
+| `trem:airline_company` | Informações de empresas aéreas |
+| `trem:ai` | Modelo de linguagem (`/llm`) |
+| `trem:linkedin_scraper` | Jobs de scraping do LinkedIn |
+| `trem:admin` | Administração (005); concedida a ninguém pela migration |
 
 A migration 004 trocou o perfil único (`profile_id`) pelo conjunto: todo usuário
 existente recebeu todos os perfis, e toda chave existente manteve o seu e ganhou
-`ai` (antes dela o `/llm` aceitava qualquer chave). `users.profile_id` e
-`api_clients.profile_id` continuam no banco, opcionais e sem uso pelo código, para
-o downgrade devolver o perfil exato de cada linha; saem numa migration posterior.
+`ai` (antes dela o `/llm` aceitava qualquer chave). A 005 transformou os perfis,
+antes um enum travado por CHECK, em permissões da aplicação `trem`, sem mudar nenhum
+acesso: aplicação ou permissão nova é um registro, não uma migration.
+`users.profile_id` e `api_clients.profile_id` continuam no banco, opcionais e sem uso
+pelo código, para o downgrade da 004 devolver o perfil exato de cada linha.
 
 ### Status possíveis de usuário
 
@@ -188,7 +206,7 @@ o downgrade devolver o perfil exato de cada linha; saem numa migration posterior
 
 A API é consumida por **aplicações** (outras APIs, scripts, o playground) e,
 futuramente, por **usuários humanos** num front-end. Os dois obtêm credenciais
-de formas diferentes, mas passam pela mesma checagem de perfil.
+de formas diferentes, mas passam pela mesma checagem de permissão.
 
 | Chamador | Credencial | Header |
 |----------|-----------|--------|
@@ -197,7 +215,7 @@ de formas diferentes, mas passam pela mesma checagem de perfil.
 | Administrador | master key | `X-API-Key: <API_KEY>` |
 
 As duas primeiras são normalizadas em um `Principal` (`app/domain/entities/api_client.py`),
-que é o que `require_profile()` inspeciona. As rotas não sabem — nem precisam
+que é o que `require_permission()` inspeciona. As rotas não sabem — nem precisam
 saber — qual esquema foi usado.
 
 A **master key** (`settings.API_KEY`) é a exceção: serve só para administrar
@@ -205,7 +223,7 @@ credenciais em `/admin/clients` e `/users`. Ela não autentica rotas de negócio
 
 ### API keys por cliente
 
-Cada aplicação consumidora tem a sua chave, com perfis e revogação próprios
+Cada aplicação consumidora tem a sua chave, com permissões e revogação próprias
 (tabela `api_clients`). Isso substitui a chave única compartilhada, que não
 permitia revogar um consumidor sem derrubar todos nem saber quem chamou o quê.
 
@@ -215,16 +233,16 @@ permitia revogar um consumidor sem derrubar todos nem saber quem chamou o quê.
   cliente por índice em vez de varrer a tabela a cada request
 - Devolvida em claro **uma única vez**, na criação
 - `last_used_at` registra o uso, para auditoria e detecção de chaves esquecidas
-- Pode ter um **dono** (`user_id`). Os perfis da chave precisam estar entre os do
-  dono na criação, e a cada request valem só os que o dono ainda tem: bloquear o
-  usuário ou tirar um perfil dele vale na hora para as chaves dele. O `Principal`
+- Pode ter um **dono** (`user_id`). As permissões da chave precisam estar entre as do
+  dono na criação, e a cada request valem só as que o dono ainda tem: bloquear o
+  usuário ou tirar uma permissão dele vale na hora para as chaves dele. O `Principal`
   carrega o `user_id`, que é a quem pertencem os recursos pessoais (jobs de
   scraping), para sobreviverem à rotação da chave. Sem dono é chave de serviço
 
 ```bash
 # Bootstrap (primeiro cliente, antes de existir chave para chamar a API)
-python -m scripts.manage_api_clients create flight-api --profile airline_company
-python -m scripts.manage_api_clients create diego-ai --profile ai --profile linkedin_scraper --user diego
+python -m scripts.manage_api_clients create files-app --permission trem:file_editor
+python -m scripts.manage_api_clients create diego-ai --permission trem:ai --permission trem:linkedin_scraper --user diego
 python -m scripts.manage_api_clients list
 python -m scripts.manage_api_clients revoke <client_id>
 ```
@@ -263,7 +281,7 @@ parallelism  = 4 threads
 {
   "sub": "uuid-do-usuario",
   "username": "nome_usuario",
-  "profiles": ["ai", "file_editor"],
+  "perms": ["trem:ai", "trem:file_editor"],
   "must_change_password": false,
   "iat": 1234567890,
   "exp": 1234567890,
@@ -316,7 +334,7 @@ parallelism  = 4 threads
    → revoga todos os refresh_tokens anteriores
    → emite novos tokens
 
-7. Usuário acessa endpoints conforme perfil
+7. Usuário acessa endpoints conforme as permissões
 ```
 
 ---
@@ -341,11 +359,11 @@ parallelism  = 4 threads
 | GET    | `/users/{id}`                            | API Key  | Detalha usuário                 |
 | POST   | `/users/{id}/send-provisional-password`  | API Key  | Envia senha provisória por email|
 
-`POST /users` recebe `profile_names` (lista, ao menos um). `POST /admin/clients`
-recebe `profile_names` e, opcionalmente, `user_id` do dono. O antigo
-`profile_name` (um só) responde 422.
+`POST /users` recebe `permissions` (lista de chaves `<aplicação>:<permissão>`, ao menos
+uma). `POST /admin/clients` recebe `permissions` e, opcionalmente, `user_id` do dono.
+Os antigos `profile_name` e `profile_names` respondem 422.
 
-### Arquivos — autenticados via JWT + perfil `file_editor`
+### Arquivos — permissão `trem:file_editor`
 
 | Método | Path                  |
 |--------|-----------------------|
@@ -359,13 +377,13 @@ recebe `profile_names` e, opcionalmente, `user_id` do dono. O antigo
 | POST   | `/audio/*`            |
 | POST   | `/image/*`            |
 
-### Aéreas — autenticados via JWT + perfil `airline_company`
+### Aéreas — permissão `trem:airline_company`
 
 | Método | Path            | Descrição                              |
 |--------|-----------------|----------------------------------------|
 | GET    | `/airline/*`    | Proxy para API aérea na rede Docker    |
 
-### LLM — perfil `ai`
+### LLM — permissão `trem:ai`
 
 | Método | Path                         | Descrição                                   |
 |--------|------------------------------|---------------------------------------------|
@@ -405,7 +423,7 @@ fala com `http://trem-llm:8080` usando `LLM_API_KEY`; nada do chamador é repass
   usuário digita, e retoma o polling de respostas pendentes após recarregar a página.
   O histórico fica só no `localStorage` do navegador.
 
-### Scrapers — perfil `linkedin_scraper`
+### Scrapers — permissão `trem:linkedin_scraper`
 
 | Método | Path | Descrição |
 |--------|------|-----------|
@@ -455,24 +473,19 @@ partes de 50 MB e o resultado é consultado depois (`app/services/transcriptionS
 
 ---
 
-## Controle de Perfis
+## Controle de Permissões
 
 ```python
-# Uso nos routers via Depends
 @router.post("/pdf/split")
 async def split_pdf(
     ...,
-    user: User = Depends(require_profile("file_editor"))
-):
-    ...
-
-@router.get("/airline/flights")
-async def get_flights(
-    ...,
-    user: User = Depends(require_profile("airline_company"))
+    _: Principal = Depends(require_permission(TremPermission.FILE_EDITOR))
 ):
     ...
 ```
+
+A permissão vem do banco a cada request, nunca do token: tirar uma permissão vale
+na hora, sem esperar o access token expirar.
 
 ---
 
@@ -562,7 +575,7 @@ JWT_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"
 | 3    | PostgreSQL: modelos ORM + Alembic + primeira migration            | ✅     |
 | 4    | Autenticação: Argon2id + JWT RS256 + fluxo completo              | ✅     |
 | 5    | CRUD de usuários + fluxo de senha provisória                     | ✅     |
-| 6    | Migrar routers existentes para JWT + perfis                      | ✅     |
+| 6    | Migrar routers existentes para JWT + permissões                  | ✅     |
 | 7    | Cliente HTTP para API aérea                                       | ✅     |
 | 8    | Docker Compose com postgres, adminer e rede compartilhada        | ✅     |
 | 9    | Testes e CI/CD                                                    | 🔲     |

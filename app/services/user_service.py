@@ -2,11 +2,12 @@ from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import UserAlreadyExistsError, UserNotFoundError
+from app.core.exceptions import UnknownPermissionsError, UserAlreadyExistsError, UserNotFoundError
 from app.core.security import generate_provisional_password, hash_password
 from app.domain.entities.user import User
 from app.domain.schemas.user import UserCreate
 from app.infrastructure.email.smtp_client import SmtpEmailClient
+from app.repositories.permission_repository import PermissionRepository
 from app.repositories.user_repository import UserRepository
 
 
@@ -14,6 +15,7 @@ class UserService:
 
     def __init__(self, session: AsyncSession):
         self._repo = UserRepository(session)
+        self._permissions = PermissionRepository(session)
         self._email = SmtpEmailClient()
 
     async def create_user(self, data: UserCreate) -> User:
@@ -21,11 +23,10 @@ class UserService:
         if existing:
             raise UserAlreadyExistsError()
 
-        profiles = await self._repo.get_profiles_by_names(data.profile_names)
-        missing = set(data.profile_names) - {p.name for p in profiles}
+        permissions = await self._permissions.get_by_keys(data.permissions)
+        missing = set(data.permissions) - {p.key for p in permissions}
         if missing:
-            from app.core.exceptions import AppException
-            raise AppException(f"Perfis não encontrados: {', '.join(sorted(missing))}", 400)
+            raise UnknownPermissionsError(missing)
 
         # Usuário criado sem senha — admin envia a senha provisória depois
         placeholder_hash = hash_password("__NO_PASSWORD_SET__")
@@ -33,7 +34,7 @@ class UserService:
         user = await self._repo.create(
             username=data.username,
             password_hash=placeholder_hash,
-            profile_ids=[str(p.id) for p in profiles],
+            permission_ids=[str(p.id) for p in permissions],
             email=data.email,
         )
         return user

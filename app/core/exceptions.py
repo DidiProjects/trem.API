@@ -46,6 +46,11 @@ class UserAlreadyExistsError(AppException):
         super().__init__("Nome de usuário já cadastrado", status_code=409)
 
 
+class UnknownPermissionsError(AppException):
+    def __init__(self, keys):
+        super().__init__(f"Permissões não encontradas: {', '.join(sorted(keys))}", status_code=400)
+
+
 class InsufficientPermissionsError(AppException):
     def __init__(self):
         super().__init__("Permissão insuficiente para este recurso", status_code=403)

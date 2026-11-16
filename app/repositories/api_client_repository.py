@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.interfaces.i_api_client_repository import IApiClientRepository
 from app.domain.entities.api_client import ApiClient
-from app.infrastructure.database.models import ApiClientModel, ProfileModel
+from app.infrastructure.database.models import ApiClientModel, PermissionModel
 from app.repositories.base import BaseRepository
 from app.repositories.user_repository import _as_uuid
 
@@ -16,7 +16,7 @@ def _to_entity(orm: ApiClientModel) -> ApiClient:
         id=str(orm.id),
         name=orm.name,
         description=orm.description,
-        profile_names=sorted(p.name for p in orm.profiles),
+        permissions=sorted(p.key for p in orm.permissions),
         revoked=orm.revoked,
         last_used_at=orm.last_used_at,
         created_at=orm.created_at,
@@ -61,18 +61,18 @@ class ApiClientRepository(BaseRepository, IApiClientRepository):
         self,
         name: str,
         key_hash: str,
-        profile_ids: list[str],
+        permission_ids: list[str],
         description: Optional[str] = None,
         user_id: Optional[str] = None,
     ) -> ApiClient:
-        ids = [i for i in (_as_uuid(p) for p in profile_ids) if i]
-        profiles = (
-            await self._session.execute(select(ProfileModel).where(ProfileModel.id.in_(ids)))
+        ids = [i for i in (_as_uuid(p) for p in permission_ids) if i]
+        permissions = (
+            await self._session.execute(select(PermissionModel).where(PermissionModel.id.in_(ids)))
         ).scalars().all()
         orm = ApiClientModel(
             name=name,
             key_hash=key_hash,
-            profiles=list(profiles),
+            permissions=list(permissions),
             description=description,
             user_id=_as_uuid(user_id),
         )

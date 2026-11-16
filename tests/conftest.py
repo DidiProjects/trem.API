@@ -73,12 +73,13 @@ from app.api.v1.dependencies import (  # noqa: E402
     authenticated_user_or_none,
     get_current_user,
 )
-from app.domain.entities.profile import ProfileName  # noqa: E402
+from app.domain.entities.permission import TREM_APP, TremPermission  # noqa: E402
 from app.domain.entities.user import User, UserStatus  # noqa: E402
 from app.infrastructure.database.connection import get_db  # noqa: E402
 from app.infrastructure.database.models import (  # noqa: E402
+    ApplicationModel,
     Base,
-    ProfileModel,
+    PermissionModel,
     UserModel,
 )
 from app.services.transcriptionService import (  # noqa: E402
@@ -133,29 +134,31 @@ async def db_session(db_engine):
 
 
 @pytest.fixture
-async def seeded_profiles(db_session):
-    """Insere os perfis do seed das migrations (001 e 004) e devolve {nome: id}."""
-    profiles = {}
-    for name in ProfileName:
-        orm = ProfileModel(id=uuid.uuid4(), name=name.value, description=None)
+async def seeded_permissions(db_session):
+    """Insere a aplicação trem e as permissões do seed das migrations; devolve {chave: id}."""
+    trem = ApplicationModel(id=uuid.uuid4(), slug=TREM_APP, name="trem.API")
+    db_session.add(trem)
+    permissions = {}
+    for key in TremPermission:
+        orm = PermissionModel(id=uuid.uuid4(), application=trem, name=key.split(":", 1)[1])
         db_session.add(orm)
-        profiles[name.value] = str(orm.id)
+        permissions[key.value] = str(orm.id)
     await db_session.flush()
-    return profiles
+    return permissions
 
 
 @pytest.fixture
-async def persisted_user(db_session, seeded_profiles):
-    """Um usuário ativo já gravado no SQLite, com o perfil file_editor."""
+async def persisted_user(db_session, seeded_permissions):
+    """Um usuário ativo já gravado no SQLite, com a permissão trem:file_editor."""
     file_editor = await db_session.get(
-        ProfileModel, uuid.UUID(seeded_profiles[ProfileName.FILE_EDITOR.value])
+        PermissionModel, uuid.UUID(seeded_permissions[TremPermission.FILE_EDITOR])
     )
     orm = UserModel(
         id=uuid.uuid4(),
         username="persisted",
         email="persisted@example.com",
         password_hash="$argon2id$placeholder",
-        profiles=[file_editor],
+        permissions=[file_editor],
         status=UserStatus.ACTIVE.value,
         must_change_password=False,
     )
@@ -169,7 +172,7 @@ async def persisted_user(db_session, seeded_profiles):
 # ---------------------------------------------------------------------------
 
 def make_mock_user(
-    profile_names: tuple[str, ...] = (ProfileName.FILE_EDITOR.value,),
+    permissions: tuple[str, ...] = (TremPermission.FILE_EDITOR.value,),
     must_change_password: bool = False,
     status: str = UserStatus.ACTIVE.value,
 ) -> User:
@@ -178,7 +181,7 @@ def make_mock_user(
         username="testuser",
         email="test@example.com",
         password_hash="$argon2id$placeholder",
-        profile_names=list(profile_names),
+        permissions=list(permissions),
         status=status,
         must_change_password=must_change_password,
         provisional_password_sent_at=None,
@@ -189,19 +192,19 @@ def make_mock_user(
 
 
 async def _user_file_editor():
-    return make_mock_user((ProfileName.FILE_EDITOR.value,))
+    return make_mock_user((TremPermission.FILE_EDITOR.value,))
 
 
 async def _user_must_change():
-    return make_mock_user((ProfileName.FILE_EDITOR.value,), must_change_password=True)
+    return make_mock_user((TremPermission.FILE_EDITOR.value,), must_change_password=True)
 
 
 async def _user_airline():
-    return make_mock_user((ProfileName.AIRLINE_COMPANY.value,))
+    return make_mock_user((TremPermission.AIRLINE_COMPANY.value,))
 
 
 async def _user_ai():
-    return make_mock_user((ProfileName.AI.value,))
+    return make_mock_user((TremPermission.AI.value,))
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +214,7 @@ async def _user_ai():
 def _authenticated_as(user_factory):
     """
     Monta um TestClient autenticado substituindo apenas a *resolução* do
-    usuário. As regras de perfil e de senha pendente continuam sendo aplicadas
+    usuário. As regras de permissão e de senha pendente continuam sendo aplicadas
     pelo get_current_principal real — é o que mantém os testes de 403
     verificando a aplicação, e não o fixture.
     """
@@ -237,14 +240,14 @@ def client_must_change():
 
 @pytest.fixture
 def client_airline():
-    """Client autenticado com perfil airline_company."""
+    """Client autenticado com a permissão trem:airline_company."""
     yield _authenticated_as(_user_airline)
     app.dependency_overrides.clear()
 
 
 @pytest.fixture
 def client_ai():
-    """Client autenticado só com o perfil ai."""
+    """Client autenticado só com a permissão trem:ai."""
     yield _authenticated_as(_user_ai)
     app.dependency_overrides.clear()
 

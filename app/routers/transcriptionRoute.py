@@ -3,7 +3,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel
 
-from app.api.v1.dependencies import require_profile
+from app.api.v1.dependencies import require_permission
+from app.domain.entities.permission import TremPermission
 from app.domain.entities.api_client import Principal
 from app.services.transcriptionService import (
     Job,
@@ -17,7 +18,7 @@ from app.services.transcriptionService import (
 # large files come in parts and the result is polled.
 router = APIRouter()
 
-file_editor = require_profile("file_editor")
+file_editor = require_permission(TremPermission.FILE_EDITOR)
 
 
 class UploadRequest(BaseModel):

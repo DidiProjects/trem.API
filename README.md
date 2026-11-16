@@ -392,7 +392,7 @@ model takes minutes to load, a long prompt can take minutes to answer), so over 
 public URL use the [job endpoints](#chat-job): Cloudflare cuts responses at 100 s and
 nginx at 60 s. The synchronous endpoint is for callers on the local port. One inference
 runs at a time, jobs included; when the queue is full the API answers `503` with
-`Retry-After`. Every `/llm` route requires the `ai` profile (`403` without it).
+`Retry-After`. Every `/llm` route requires the `trem:ai` permission (`403` without it).
 
 #### Chat Completion
 ```
@@ -458,7 +458,7 @@ or `503` when the model server is unreachable.
 ### Scraper Endpoints
 
 LinkedIn jobs and posts collected on a schedule and scored against the caller's CV, run by
-the linkedinho orchestrator on the internal network. Requires the `linkedin_scraper` profile
+the linkedinho orchestrator on the internal network. Requires the `trem:linkedin_scraper` permission
 and a person behind the call: a logged-in user, or an API key owned by a user (a service key
 without owner gets `403`). Jobs belong to that user, not to the key. The **Scrapers** tab of
 `/` does all of this.

@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.domain.entities.profile import ProfileName
+from app.domain.entities.permission import TremPermission
 from app.domain.entities.user import User, UserStatus
 from app.repositories.user_repository import UserRepository, _as_uuid
 
@@ -19,11 +19,11 @@ def repo(db_session):
     return UserRepository(db_session)
 
 
-async def _make_user(repo, seeded_profiles, username="novo", email="novo@example.com"):
+async def _make_user(repo, seeded_permissions, username="novo", email="novo@example.com"):
     return await repo.create(
         username=username,
         password_hash="$argon2id$hash",
-        profile_ids=[seeded_profiles[ProfileName.FILE_EDITOR.value]],
+        permission_ids=[seeded_permissions[TremPermission.FILE_EDITOR.value]],
         email=email,
     )
 
@@ -45,64 +45,58 @@ class TestAsUuidHelper:
 
 
 class TestCreate:
-    async def test_returns_domain_entity(self, repo, seeded_profiles):
-        user = await _make_user(repo, seeded_profiles)
+    async def test_returns_domain_entity(self, repo, seeded_permissions):
+        user = await _make_user(repo, seeded_permissions)
         assert isinstance(user, User)
         assert user.username == "novo"
         assert user.email == "novo@example.com"
 
-    async def test_resolves_profile_names(self, repo, seeded_profiles):
-        user = await _make_user(repo, seeded_profiles)
-        assert user.profile_names == [ProfileName.FILE_EDITOR.value]
+    async def test_resolves_permissions(self, repo, seeded_permissions):
+        user = await _make_user(repo, seeded_permissions)
+        assert user.permissions == [TremPermission.FILE_EDITOR.value]
 
-    async def test_several_profiles_come_back_sorted(self, repo, seeded_profiles):
+    async def test_several_profiles_come_back_sorted(self, repo, seeded_permissions):
         user = await repo.create(
             username="varios",
             password_hash="$argon2id$hash",
-            profile_ids=[
-                seeded_profiles[ProfileName.LINKEDIN_SCRAPER.value],
-                seeded_profiles[ProfileName.AI.value],
+            permission_ids=[
+                seeded_permissions[TremPermission.LINKEDIN_SCRAPER.value],
+                seeded_permissions[TremPermission.AI.value],
             ],
         )
-        assert user.profile_names == [ProfileName.AI.value, ProfileName.LINKEDIN_SCRAPER.value]
+        assert user.permissions == [TremPermission.AI.value, TremPermission.LINKEDIN_SCRAPER.value]
         found = await repo.get_by_username("varios")
-        assert found.profile_names == user.profile_names
+        assert found.permissions == user.permissions
 
-    async def test_profile_lookups_by_name_and_id(self, repo, seeded_profiles):
-        by_name = await repo.get_profiles_by_names(["ai", "file_editor", "inexistente"])
-        assert {p.name for p in by_name} == {"ai", "file_editor"}
-        by_id = await repo.get_profiles_by_ids([seeded_profiles["ai"], "nao-e-uuid"])
-        assert [p.name for p in by_id] == ["ai"]
-
-    async def test_defaults_to_blocked_and_must_change_password(self, repo, seeded_profiles):
+    async def test_defaults_to_blocked_and_must_change_password(self, repo, seeded_permissions):
         """Conta nasce bloqueada — o admin habilita depois."""
-        user = await _make_user(repo, seeded_profiles)
+        user = await _make_user(repo, seeded_permissions)
         assert user.status == UserStatus.BLOCKED
         assert user.must_change_password is True
         assert user.is_active is False
 
-    async def test_generates_id_and_timestamps(self, repo, seeded_profiles):
-        user = await _make_user(repo, seeded_profiles)
+    async def test_generates_id_and_timestamps(self, repo, seeded_permissions):
+        user = await _make_user(repo, seeded_permissions)
         assert uuid.UUID(user.id)
         assert user.created_at is not None
         assert user.updated_at is not None
         assert user.last_login_at is None
 
-    async def test_email_is_optional(self, repo, seeded_profiles):
+    async def test_email_is_optional(self, repo, seeded_permissions):
         user = await repo.create(
             username="sememail",
             password_hash="$argon2id$hash",
-            profile_ids=[seeded_profiles[ProfileName.FILE_EDITOR.value]],
+            permission_ids=[seeded_permissions[TremPermission.FILE_EDITOR.value]],
         )
         assert user.email is None
 
-    async def test_accepts_airline_profile(self, repo, seeded_profiles):
+    async def test_accepts_airline_profile(self, repo, seeded_permissions):
         user = await repo.create(
             username="cia",
             password_hash="$argon2id$hash",
-            profile_ids=[seeded_profiles[ProfileName.AIRLINE_COMPANY.value]],
+            permission_ids=[seeded_permissions[TremPermission.AIRLINE_COMPANY.value]],
         )
-        assert user.profile_names == [ProfileName.AIRLINE_COMPANY.value]
+        assert user.permissions == [TremPermission.AIRLINE_COMPANY.value]
 
 
 class TestGetById:
@@ -111,16 +105,16 @@ class TestGetById:
         assert found is not None
         assert found.username == "persisted"
 
-    async def test_returns_none_for_unknown_id(self, repo, seeded_profiles):
+    async def test_returns_none_for_unknown_id(self, repo, seeded_permissions):
         assert await repo.get_by_id(str(uuid.uuid4())) is None
 
-    async def test_malformed_id_returns_none_instead_of_raising(self, repo, seeded_profiles):
+    async def test_malformed_id_returns_none_instead_of_raising(self, repo, seeded_permissions):
         """Id inválido na URL deve virar 404, não erro de driver."""
         assert await repo.get_by_id("nao-e-uuid") is None
 
     async def test_loads_profile_relationship(self, repo, persisted_user):
         found = await repo.get_by_id(str(persisted_user.id))
-        assert found.profile_names == [ProfileName.FILE_EDITOR.value]
+        assert found.permissions == [TremPermission.FILE_EDITOR.value]
 
 
 class TestGetByUsername:
@@ -129,7 +123,7 @@ class TestGetByUsername:
         assert found is not None
         assert found.id == str(persisted_user.id)
 
-    async def test_returns_none_for_unknown_username(self, repo, seeded_profiles):
+    async def test_returns_none_for_unknown_username(self, repo, seeded_permissions):
         assert await repo.get_by_username("ninguem") is None
 
     async def test_is_case_sensitive(self, repo, persisted_user):
@@ -191,49 +185,68 @@ class TestSetProvisionalPasswordSent:
 
 
 class TestListAndCount:
-    async def test_lists_created_users(self, repo, seeded_profiles):
+    async def test_lists_created_users(self, repo, seeded_permissions):
         for i in range(3):
-            await _make_user(repo, seeded_profiles, f"user{i}", f"user{i}@example.com")
+            await _make_user(repo, seeded_permissions, f"user{i}", f"user{i}@example.com")
         assert len(await repo.list_all()) == 3
 
-    async def test_respects_limit(self, repo, seeded_profiles):
+    async def test_respects_limit(self, repo, seeded_permissions):
         for i in range(5):
-            await _make_user(repo, seeded_profiles, f"user{i}", f"user{i}@example.com")
+            await _make_user(repo, seeded_permissions, f"user{i}", f"user{i}@example.com")
         assert len(await repo.list_all(limit=2)) == 2
 
-    async def test_respects_offset(self, repo, seeded_profiles):
+    async def test_respects_offset(self, repo, seeded_permissions):
         for i in range(5):
-            await _make_user(repo, seeded_profiles, f"user{i}", f"user{i}@example.com")
+            await _make_user(repo, seeded_permissions, f"user{i}", f"user{i}@example.com")
         assert len(await repo.list_all(limit=10, offset=3)) == 2
 
-    async def test_empty_table_returns_empty_list(self, repo, seeded_profiles):
+    async def test_empty_table_returns_empty_list(self, repo, seeded_permissions):
         assert await repo.list_all() == []
 
-    async def test_count_all_ignores_pagination(self, repo, seeded_profiles):
+    async def test_count_all_ignores_pagination(self, repo, seeded_permissions):
         """count_all é o total da tabela — é o que alimenta PaginatedResponse.total."""
         for i in range(7):
-            await _make_user(repo, seeded_profiles, f"user{i}", f"user{i}@example.com")
+            await _make_user(repo, seeded_permissions, f"user{i}", f"user{i}@example.com")
 
         page = await repo.list_all(limit=2, offset=0)
         assert len(page) == 2
         assert await repo.count_all() == 7
 
-    async def test_count_all_on_empty_table(self, repo, seeded_profiles):
+    async def test_count_all_on_empty_table(self, repo, seeded_permissions):
         assert await repo.count_all() == 0
 
 
-class TestGetProfileByName:
-    async def test_finds_file_editor(self, repo, seeded_profiles):
-        profile = await repo.get_profile_by_name(ProfileName.FILE_EDITOR.value)
-        assert profile is not None
-        assert profile.name == ProfileName.FILE_EDITOR.value
+class TestPermissionRepository:
+    @pytest.fixture
+    def permissions(self, db_session):
+        from app.repositories.permission_repository import PermissionRepository
 
-    async def test_finds_airline_company(self, repo, seeded_profiles):
-        profile = await repo.get_profile_by_name(ProfileName.AIRLINE_COMPANY.value)
-        assert profile is not None
+        return PermissionRepository(db_session)
 
-    async def test_returns_none_for_unknown_profile(self, repo, seeded_profiles):
-        assert await repo.get_profile_by_name("inexistente") is None
+    async def test_finds_by_keys(self, permissions, seeded_permissions):
+        found = await permissions.get_by_keys(["trem:file_editor", "trem:ai"])
+        assert {p.key for p in found} == {"trem:file_editor", "trem:ai"}
+
+    async def test_unknown_keys_are_left_out(self, permissions, seeded_permissions):
+        found = await permissions.get_by_keys(["trem:ai", "trem:inexistente", "outra:ai"])
+        assert [p.key for p in found] == ["trem:ai"]
+
+    async def test_name_only_matches_within_its_application(
+        self, db_session, permissions, seeded_permissions
+    ):
+        from app.infrastructure.database.models import ApplicationModel, PermissionModel
+
+        db_session.add(PermissionModel(application=ApplicationModel(slug="financas", name="F"), name="read"))
+        await db_session.flush()
+        assert await permissions.get_by_keys(["trem:read"]) == []
+        assert [p.key for p in await permissions.get_by_keys(["financas:read"])] == ["financas:read"]
+
+    async def test_empty_input(self, permissions, seeded_permissions):
+        assert await permissions.get_by_keys([]) == []
+
+    async def test_finds_by_ids(self, permissions, seeded_permissions):
+        found = await permissions.get_by_ids([seeded_permissions["trem:ai"], "nao-e-uuid"])
+        assert [p.key for p in found] == ["trem:ai"]
 
 
 class TestRefreshTokens:
@@ -282,9 +295,9 @@ class TestRefreshTokens:
             assert (await repo.get_refresh_token(h)).revoked is True
 
     async def test_revoke_all_does_not_touch_other_users(
-        self, repo, persisted_user, seeded_profiles
+        self, repo, persisted_user, seeded_permissions
     ):
-        other = await _make_user(repo, seeded_profiles, "outro", "outro@example.com")
+        other = await _make_user(repo, seeded_permissions, "outro", "outro@example.com")
         await self._create(repo, persisted_user, "hash-do-persisted")
         await repo.create_refresh_token(
             user_id=other.id,
