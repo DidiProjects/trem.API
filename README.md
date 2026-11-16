@@ -642,6 +642,22 @@ metrics = response.json()["metrics"]
 print(f"Reduced {metrics['reduction_percent']}%")
 ```
 
+## Web Page
+
+`/` is the playground for every endpoint and, since the account work, the way people sign up
+and manage their access:
+
+- **Sign up** → confirmation e-mail → the admin approves and chooses the permissions.
+- **Log in**, with a TOTP code when two-factor is on; a provisional password must be changed first.
+- **Account** tab: profile, own API keys (at most 5, the full key shown once), two-factor set-up
+  and recovery codes, password change.
+- The API key field stays as the alternative to logging in.
+
+The access token stays in memory and the refresh token in an HttpOnly cookie, so a reload
+restores the session without JavaScript ever reading it. Refreshes are serialised across tabs
+(each one rotates the cookie). Scripts: `app/static/account.js` (session and account) before
+`app/static/script.js` (the tools), which sends requests through `authFetch`.
+
 ## Interactive Documentation
 
 Swagger UI: `http://localhost:3002/docs`

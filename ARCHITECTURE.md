@@ -382,6 +382,29 @@ não envia header próprio, e um `fetch` de outra origem que envie é barrado no
 
 Sem `session`, o refresh volta no corpo (aplicações, scripts, outros fronts).
 
+### Página (`/`)
+
+`app/static/account.js` cuida da sessão e da aba Account; `script.js` faz todas as
+chamadas por `authFetch`, que manda o Bearer quando há login ou a API key do campo, e
+repete uma vez depois de um refresh quando recebe 401.
+
+- Access token só em memória; refresh no cookie HttpOnly (`session: "cookie"`). Uma flag
+  sem segredo no `localStorage` diz se vale tentar restaurar a sessão ao carregar.
+- Refreshes serializados entre abas com Web Locks: duas abas reapresentando o mesmo
+  cookie disparariam a detecção de reuso e encerrariam o login. Logout é avisado às
+  outras abas por `BroadcastChannel`.
+- Link de confirmação (`#verify-email=`) é confirmado ao carregar e sai da barra de
+  endereço e do histórico.
+- Chave nova e códigos de recuperação aparecem num diálogo que é esvaziado ao fechar.
+- O segredo TOTP aparece como texto e link `otpauth:`, sem QR code: nenhum script de
+  terceiros numa página que manipula segredos.
+
+### Sessão do banco
+
+`get_db` é sempre `Depends(get_db, scope="function")`: o commit acontece antes de a
+resposta sair. No escopo padrão do FastAPI 0.141 ("request") ele rodava depois, e um
+cliente que agia logo após um 2xx podia não encontrar o dado gravado.
+
 ### Limite de tentativas de login
 
 Em memória (processo único), janela deslizante de `LOGIN_FAILURE_WINDOW_SECONDS` (15 min):
