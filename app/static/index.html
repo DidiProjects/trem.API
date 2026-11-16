@@ -30,11 +30,13 @@
         </div>
 
         <div class="api-key-section" id="apiKeySection">
-            <label for="apiKey">Or use an API Key</label>
+            <label for="apiKey" id="apiKeyLabel">Or use an API key</label>
             <div class="input-group">
                 <input type="password" id="apiKey" placeholder="trem_..." autocomplete="off">
-                <button onclick="toggleApiKeyVisibility()" class="btn-icon">👁</button>
+                <button onclick="toggleApiKeyVisibility()" class="btn-icon" aria-label="Show or hide the key">👁</button>
+                <button type="button" id="apiKeyClear" class="btn-secondary hidden">Clear</button>
             </div>
+            <p id="credentialStatus" class="credential-status" aria-live="polite"></p>
         </div>
 
         <div class="main-tabs">
