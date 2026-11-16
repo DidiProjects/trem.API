@@ -1199,6 +1199,7 @@ For specific formats, adjustments may be necessary.</pre>
                 <p id="loginError" class="dialog-message hidden"></p>
                 <button type="submit" class="btn-primary">Log in</button>
                 <button type="button" class="btn-secondary" data-close="loginDialog">Cancel</button>
+                <button type="button" class="scr-link" id="btnForgot">Forgot your password?</button>
                 <button type="button" class="scr-link" data-resend>Did not get the confirmation e-mail?</button>
             </form>
             <form id="loginMfaStep" class="api-form hidden">
@@ -1253,6 +1254,27 @@ For specific formats, adjustments may be necessary.</pre>
             <button type="button" class="btn-secondary" data-close="secretDialog">I saved it</button>
         </dialog>
 
+        <dialog id="forgotDialog" class="account-dialog">
+            <form id="forgotForm" class="api-form">
+                <h3>Reset your password</h3>
+                <p class="account-muted">We will send a link to the e-mail of your account. It works once, within one hour.</p>
+                <div class="form-group"><label for="forgotEmail">E-mail</label><input type="email" id="forgotEmail" required autocomplete="email"></div>
+                <p id="forgotMessage" class="dialog-message hidden"></p>
+                <button type="submit" class="btn-primary">Send link</button>
+                <button type="button" class="btn-secondary" data-close="forgotDialog">Cancel</button>
+            </form>
+        </dialog>
+        <dialog id="resetDialog" class="account-dialog">
+            <form id="resetForm" class="api-form">
+                <h3>Choose a new password</h3>
+                <p class="account-muted">At least 12 characters. Every open session ends when it changes.</p>
+                <div class="form-group"><label for="resetPassword">New password</label><input type="password" id="resetPassword" required minlength="12" maxlength="128" autocomplete="new-password"></div>
+                <div class="form-group"><label for="resetPasswordConfirm">Repeat the new password</label><input type="password" id="resetPasswordConfirm" required autocomplete="new-password"></div>
+                <p id="resetMessage" class="dialog-message hidden"></p>
+                <button type="submit" class="btn-primary">Save password</button>
+                <button type="button" class="btn-secondary" data-close="resetDialog">Cancel</button>
+            </form>
+        </dialog>
         <dialog id="noticeDialog" class="account-dialog">
             <p id="noticeText"></p>
             <button type="button" class="btn-primary" data-close="noticeDialog">OK</button>

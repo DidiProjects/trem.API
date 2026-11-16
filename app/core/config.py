@@ -48,6 +48,8 @@ class Settings(BaseSettings):
     EMAIL_TOKEN_TTL_HOURS: int = 24
     SIGNUP_MAX_PER_IP: int = 5
     SIGNUP_WINDOW_SECONDS: int = 3600
+    # A reset link is a password in transit: short-lived, single use, replaced by the next one.
+    PASSWORD_RESET_TTL_MINUTES: int = 60
 
     # Browser session: the refresh token lives in an HttpOnly cookie scoped to /auth.
     REFRESH_COOKIE_NAME: str = "trem_refresh"
