@@ -13,6 +13,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     });
 
     setupMainTabs();
+    await initAccount();
     setupFormHandlers();
     setupAiChat();
     setupScrapers();
@@ -75,13 +76,10 @@ function toggleApiKeyVisibility() {
     input.type = input.type === 'password' ? 'text' : 'password';
 }
 
-function getApiKey() {
-    const apiKey = document.getElementById('apiKey').value;
-    if (!apiKey) {
-        showToast('Please enter the API Key', 'error');
-        return null;
-    }
-    return apiKey;
+function requireCredential() {
+    if (hasCredential()) return true;
+    showToast('Log in or enter an API key', 'error');
+    return false;
 }
 
 function showLoading(message = 'Processing...') {
@@ -162,17 +160,13 @@ async function getErrorMessage(response) {
 }
 
 async function makeRequest(endpoint, formData) {
-    const apiKey = getApiKey();
-    if (!apiKey) return null;
+    if (!requireCredential()) return null;
 
     showLoading();
     
     try {
-        const response = await fetch(endpoint, {
+        const response = await authFetch(endpoint, {
             method: 'POST',
-            headers: {
-                'X-API-Key': apiKey
-            },
             body: formData
         });
 
@@ -198,10 +192,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function apiFetch(endpoint, options = {}) {
     let response;
     try {
-        response = await fetch(endpoint, {
-            ...options,
-            headers: { 'X-API-Key': getApiKey(), ...options.headers }
-        });
+        response = await authFetch(endpoint, options);
     } catch (error) {
         throw Object.assign(new Error('Connection lost, check your network'), { retryable: true });
     }
@@ -264,7 +255,7 @@ async function waitForTranscription(prefix, jobId) {
 function setupTranscribeForm({ formId, fileId, languageId, resultId, prefix, successMessage }) {
     document.getElementById(formId).addEventListener('submit', async (e) => {
         e.preventDefault();
-        if (!getApiKey()) return;
+        if (!requireCredential()) return;
 
         const file = document.getElementById(fileId).files[0];
         const language = document.getElementById(languageId).value;
@@ -665,7 +656,7 @@ const AI_STATUS_LABELS = {
     warming_up: 'waking up',
     offline: 'offline',
     unauthorized: 'invalid API key',
-    nokey: 'enter your API key'
+    nokey: 'log in or enter an API key'
 };
 
 function setupAiChat() {
@@ -700,7 +691,7 @@ function setupAiChat() {
     });
     document.getElementById('aiChatList').addEventListener('click', aiOnChatListClick);
     document.getElementById('aiMessages').addEventListener('click', aiOnMessagesClick);
-    document.getElementById('apiKey').addEventListener('change', aiRefreshHealth);
+    document.addEventListener('authchange', aiRefreshHealth);
 
     document.addEventListener('sectionchange', e => {
         ai.visible = e.detail === 'ai';
@@ -751,7 +742,7 @@ function aiNewId() {
 function aiSend() {
     const input = document.getElementById('aiInput');
     const text = input.value.trim();
-    if (!text || !getApiKey()) return;
+    if (!text || !requireCredential()) return;
 
     let chat = aiCurrent();
     if (!chat) {
@@ -911,10 +902,9 @@ function aiDeleteChat() {
 // -- model status --------------------------------------------------------
 
 async function aiRefreshHealth() {
-    const key = document.getElementById('apiKey').value;
-    if (!key) return aiSetStatus('nokey');
+    if (!hasCredential()) return aiSetStatus('nokey');
     try {
-        const response = await fetch('/llm/health', { headers: { 'X-API-Key': key } });
+        const response = await authFetch('/llm/health');
         if (response.status === 401 || response.status === 403) return aiSetStatus('unauthorized');
         if (!response.ok) return aiSetStatus('offline');
         aiSetStatus((await response.json()).status);
@@ -936,7 +926,7 @@ function aiSetStatus(status) {
 }
 
 async function aiWake() {
-    if (ai.waking || ai.status !== 'sleeping' || !document.getElementById('apiKey').value) return;
+    if (ai.waking || ai.status !== 'sleeping' || !hasCredential()) return;
     ai.waking = true;
     aiSetStatus('warming_up');
     try {
@@ -1255,7 +1245,7 @@ function setupScrapers() {
     document.getElementById('scrOnlyRelevant').addEventListener('change', () => scrShowMatches(scr.matchesJob));
     document.getElementById('scrDisconnect').addEventListener('click', scrDisconnect);
     document.getElementById('scrConnect').addEventListener('click', scrConnect);
-    document.getElementById('apiKey').addEventListener('change', () => { if (scr.visible) scrLoad(); });
+    document.addEventListener('authchange', () => { if (scr.visible) scrLoad(); });
     document.addEventListener('sectionchange', e => {
         scr.visible = e.detail === 'scrapers';
         if (scr.visible) scrLoad();
@@ -1268,11 +1258,10 @@ function setupScrapers() {
 }
 
 async function scrFetch(path, options = {}) {
-    const key = document.getElementById('apiKey').value;
-    if (!key) throw new Error('Enter an API key with the linkedin_scraper profile');
+    if (!hasCredential()) throw new Error('Log in, or enter an API key, with the trem:linkedin_scraper permission');
     let response;
     try {
-        response = await fetch(SCR_BASE + path, { ...options, headers: { 'X-API-Key': key, ...options.headers } });
+        response = await authFetch(SCR_BASE + path, options);
     } catch (error) {
         throw new Error('Connection lost, check your network');
     }
@@ -1296,9 +1285,9 @@ async function scrErrorMessage(response) {
 }
 
 async function scrLoad() {
-    if (!document.getElementById('apiKey').value) {
+    if (!hasCredential()) {
         scrRenderSession(null);
-        scrRenderJobs([], 'Enter an API key with the linkedin_scraper profile to see your jobs.');
+        scrRenderJobs([], 'Log in, or enter an API key, with the trem:linkedin_scraper permission to see your jobs.');
         return;
     }
     try {

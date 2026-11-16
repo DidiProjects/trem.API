@@ -105,7 +105,7 @@ header p {
     background: transparent;
     border: none;
     color: #888;
-    padding: 1rem 2rem;
+    padding: 1rem 0.75rem;
     border-radius: 10px;
     cursor: pointer;
     font-size: 1rem;
@@ -1816,5 +1816,147 @@ input[type="number"]:focus {
 
     .scr-date {
         white-space: normal;
+    }
+}
+
+/* -- account ------------------------------------------------------------ */
+
+.account-bar {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.account-bar > div {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.account-muted {
+    color: #888;
+    font-size: 0.9rem;
+}
+
+.account-card {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+}
+
+.account-card h3 {
+    color: #00d9ff;
+    margin-bottom: 1rem;
+}
+
+.account-card h4 {
+    color: #ccc;
+    font-size: 0.95rem;
+}
+
+.account-profile {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.5rem 1.5rem;
+}
+
+.account-profile dt {
+    color: #888;
+}
+
+.account-badges,
+.account-checks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.account-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.35rem 0.75rem;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+.account-secret {
+    user-select: all;
+    word-break: break-all;
+    white-space: pre-wrap;
+    margin: 1rem 0;
+}
+
+.scr-table tr.revoked td {
+    opacity: 0.5;
+}
+
+.account-dialog {
+    margin: auto;
+    width: min(440px, calc(100vw - 2rem));
+    background: #16213e;
+    color: #e4e4e4;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 12px;
+    padding: 1.5rem;
+}
+
+.account-dialog::backdrop {
+    background: rgba(0, 0, 0, 0.6);
+}
+
+.account-dialog h3 {
+    color: #00d9ff;
+    margin-bottom: 0.5rem;
+}
+
+.account-dialog .api-form {
+    border-top: none;
+    padding-top: 0;
+}
+
+.account-dialog > button,
+.account-dialog #signupDone button {
+    margin-top: 0.75rem;
+    margin-right: 0.5rem;
+}
+
+.dialog-message {
+    font-size: 0.9rem;
+    padding: 0.6rem 0.8rem;
+    border-radius: 8px;
+}
+
+.dialog-message.error {
+    background: rgba(249, 62, 62, 0.15);
+    color: #ff7b7b;
+}
+
+.dialog-message.success {
+    background: rgba(0, 255, 136, 0.12);
+    color: #00ff88;
+}
+
+input[type="email"] {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    color: #fff;
+    font-size: 0.95rem;
+}
+
+@media (max-width: 600px) {
+    .account-bar {
+        justify-content: center;
+    }
+
+    .account-profile {
+        grid-template-columns: 1fr;
     }
 }

@@ -20,7 +20,7 @@ router = APIRouter(prefix="/admin/clients", tags=["Admin: API Clients"])
 @router.post("", response_model=ApiClientCreatedResponse, status_code=status.HTTP_201_CREATED)
 async def create_client(
     body: ApiClientCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     _: User = Depends(require_admin),
 ):
     """Cria um cliente e devolve a chave em claro — só desta vez."""
@@ -45,7 +45,7 @@ async def create_client(
 async def list_clients(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     _: User = Depends(require_admin),
 ):
     clients, total = await ApiClientService(db).list_clients(limit=limit, offset=offset)
@@ -60,7 +60,7 @@ async def list_clients(
 @router.get("/{client_id}", response_model=ApiClientResponse)
 async def get_client(
     client_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     _: User = Depends(require_admin),
 ):
     try:
@@ -73,7 +73,7 @@ async def get_client(
 @router.delete("/{client_id}", response_model=MessageResponse)
 async def revoke_client(
     client_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     _: User = Depends(require_admin),
 ):
     """Revoga a chave. É irreversível — para religar, crie outro cliente."""

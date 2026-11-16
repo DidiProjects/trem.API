@@ -268,3 +268,51 @@ class TestLoginOfPendingAccounts:
         _register(http)
         response = http.post("/auth/login", json={"username": "joana", "password": "errada errada"})
         assert response.status_code == 401
+
+
+class TestCommitOrder:
+    async def test_the_session_is_committed_before_the_response_goes_out(
+        self, db_session, seeded_permissions, email, monkeypatch
+    ):
+        """
+        A client acting on a 2xx must find the data there. With the default "request" scope,
+        FastAPI ran get_db's commit after sending the response.
+        """
+        import json
+
+        events = []
+
+        async def _db():
+            yield db_session
+            events.append("commit")
+
+        app.dependency_overrides[get_db] = _db
+        app.dependency_overrides[get_email_client] = lambda: email
+        body = json.dumps({"username": "joana", "email": "joana@example.com", "password": PASSWORD}).encode()
+        scope = {
+            "type": "http", "method": "POST", "path": "/auth/register", "raw_path": b"/auth/register",
+            "query_string": b"", "headers": [(b"content-type", b"application/json"), (b"host", b"testserver")],
+            "scheme": "https", "server": ("testserver", 443), "client": ("1.2.3.4", 1), "http_version": "1.1",
+            "root_path": "",
+        }
+        sent = False
+
+        async def receive():
+            nonlocal sent
+            if sent:
+                return {"type": "http.disconnect"}
+            sent = True
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        async def send(message):
+            if message["type"] == "http.response.start":
+                events.append(f"response {message['status']}")
+
+        limiter = SlidingWindowLimiter(limit=3, window_seconds=3600)
+        with patch("app.services.signup_service.get_signup_limiter", return_value=limiter):
+            try:
+                await app(scope, receive, send)
+            finally:
+                app.dependency_overrides.clear()
+
+        assert events == ["commit", "response 202"]

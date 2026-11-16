@@ -27,7 +27,7 @@ async def register(
     body: RegisterRequest,
     request: Request,
     background: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     email_client=Depends(get_email_client),
 ):
     service = SignupService(db, email_client)
@@ -44,7 +44,7 @@ async def resend_verification(
     body: ResendVerificationRequest,
     request: Request,
     background: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     email_client=Depends(get_email_client),
 ):
     service = SignupService(db, email_client)
@@ -60,7 +60,7 @@ async def resend_verification(
 async def verify_email(
     body: EmailTokenRequest,
     background: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     email_client=Depends(get_email_client),
 ):
     service = SignupService(db, email_client)

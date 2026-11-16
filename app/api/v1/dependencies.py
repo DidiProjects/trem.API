@@ -23,7 +23,7 @@ _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Security(_bearer),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> User:
     if not credentials:
         raise HTTPException(
@@ -71,7 +71,7 @@ async def get_current_active_user(
 async def authenticated_user_or_none(
     api_key: Optional[str] = Security(_api_key_header),
     credentials: Optional[HTTPAuthorizationCredentials] = Security(_bearer),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> Optional[User]:
     """
     Resolve o usuário do Bearer, ou None quando não há Bearer utilizável.
@@ -95,7 +95,7 @@ async def authenticated_user_or_none(
 async def get_current_principal(
     api_key: Optional[str] = Security(_api_key_header),
     user: Optional[User] = Depends(authenticated_user_or_none),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> Principal:
     """
     Resolve quem chamou, aceitando as duas formas de credencial:

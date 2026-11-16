@@ -85,7 +85,7 @@ async def login(
     body: LoginRequest,
     request: Request,
     response: Response,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     try:
         tokens, raw_refresh = await AuthService(db).login(
@@ -116,7 +116,7 @@ async def verify_mfa(
     body: MfaVerifyRequest,
     request: Request,
     response: Response,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     try:
         tokens, raw_refresh = await AuthService(db).verify_mfa(
@@ -135,7 +135,7 @@ async def verify_mfa(
 async def enroll_mfa(
     body: PasswordConfirmation,
     user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Starts a TOTP enrolment: scan the URI, then confirm with a code."""
     try:
@@ -149,7 +149,7 @@ async def enroll_mfa(
 async def confirm_mfa(
     body: MfaCodeRequest,
     user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     try:
         codes = await MfaService(db).confirm(user, body.code)
@@ -162,7 +162,7 @@ async def confirm_mfa(
 async def regenerate_recovery_codes(
     body: MfaDisableRequest,
     user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """New set of recovery codes; the old ones stop working."""
     try:
@@ -176,7 +176,7 @@ async def regenerate_recovery_codes(
 async def disable_mfa(
     body: MfaDisableRequest,
     user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Turns TOTP off and ends every session of the account."""
     try:
@@ -191,7 +191,7 @@ async def refresh(
     request: Request,
     response: Response,
     body: Optional[RefreshRequest] = Body(default=None),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     raw, from_cookie = _refresh_from(request, body)
     try:
@@ -219,7 +219,7 @@ def _expired_cookie_header() -> str:
 async def change_password(
     body: ChangePasswordRequest,
     current_user: User = Depends(get_current_user),  # não usa get_current_active_user — é o endpoint de troca
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     service = AuthService(db)
     try:
@@ -238,7 +238,7 @@ async def logout(
     request: Request,
     response: Response,
     body: Optional[RefreshRequest] = Body(default=None),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     raw, from_cookie = _refresh_from(request, body)
     await AuthService(db).logout(raw)
