@@ -8,7 +8,7 @@
 const SESSION_FLAG = 'trem_session';  // "there may be a cookie": avoids a pointless 401 on load
 const CSRF = { 'X-Requested-With': 'trem' };
 
-const auth = { token: null, me: null, timer: null, refreshing: null, challenge: null };
+const auth = { token: null, me: null, timer: null, refreshing: null, challenge: null, resetToken: null };
 const authChannel = 'BroadcastChannel' in window ? new BroadcastChannel('trem-auth') : null;
 
 function storage(op, key, value) {
@@ -232,6 +232,42 @@ async function verifyEmailFromLink() {
         ? 'E-mail confirmed. Your sign-up is now waiting for the administrator; you will be able to log in once it is approved.'
         : `${await readError(response)}. Ask for a new link from the sign-up window.`;
     openDialog('noticeDialog');
+}
+
+async function submitForgot(event) {
+    event.preventDefault();
+    const response = await postJson('/auth/forgot-password', { email: document.getElementById('forgotEmail').value.trim() });
+    if (!response.ok) return dialogMessage('forgotMessage', await readError(response));
+    closeDialog('forgotDialog');
+    showToast('If there is an active account with this e-mail, a reset link is on its way', 'success');
+}
+
+function resetPasswordFromLink() {
+    const match = location.hash.match(/^#reset-password=([A-Za-z0-9_-]+)$/);
+    if (!match) return;
+    // Out of the address bar and the history before anything else; kept only in memory.
+    history.replaceState(null, '', location.pathname + location.search);
+    auth.resetToken = match[1];
+    openDialog('resetDialog');
+}
+
+async function submitReset(event) {
+    event.preventDefault();
+    const password = document.getElementById('resetPassword').value;
+    if (password !== document.getElementById('resetPasswordConfirm').value) {
+        return dialogMessage('resetMessage', 'The passwords do not match');
+    }
+    const response = await postJson('/auth/reset-password', { token: auth.resetToken, new_password: password });
+    if (!response.ok) {
+        const message = await readError(response);
+        return dialogMessage('resetMessage', response.status === 400 ? `${message}. Ask for a new link.` : message);
+    }
+    auth.resetToken = null;
+    closeDialog('resetDialog');
+    if (isLoggedIn()) endSession();
+    showToast('Password changed. Log in with the new password.', 'success');
+    showLoginStep('password');
+    openDialog('loginDialog');
 }
 
 async function submitPasswordChange(event) {
@@ -477,11 +513,18 @@ function setupAccount() {
     document.getElementById('loginPasswordStep').addEventListener('submit', submitLogin);
     document.getElementById('loginMfaStep').addEventListener('submit', submitMfa);
     document.getElementById('signupForm').addEventListener('submit', submitSignup);
+    document.getElementById('btnForgot').addEventListener('click', () => {
+        closeDialog('loginDialog');
+        openDialog('forgotDialog');
+    });
+    document.getElementById('forgotForm').addEventListener('submit', submitForgot);
+    document.getElementById('resetForm').addEventListener('submit', submitReset);
     document.querySelectorAll('.password-form').forEach(form => form.addEventListener('submit', submitPasswordChange));
     document.querySelectorAll('[data-resend]').forEach(b => b.addEventListener('click', resendVerification));
     document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => {
         if (b.dataset.close === 'secretDialog') return closeSecret();
         if (b.dataset.close === 'loginDialog') { auth.challenge = null; showLoginStep('password'); }
+        if (b.dataset.close === 'resetDialog') auth.resetToken = null;
         closeDialog(b.dataset.close);
     }));
     document.getElementById('secretDialog').addEventListener('cancel', closeSecret);
@@ -506,5 +549,6 @@ function setupAccount() {
 async function initAccount() {
     setupAccount();
     await verifyEmailFromLink();
+    resetPasswordFromLink();
     if (storage('get', SESSION_FLAG)) await refreshSession();
 }
