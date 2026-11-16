@@ -3,15 +3,6 @@ let API_BASE_URL = '';
 document.addEventListener('DOMContentLoaded', async function() {
     await loadConfig();
     
-    const savedApiKey = localStorage.getItem('apiKey');
-    if (savedApiKey) {
-        document.getElementById('apiKey').value = savedApiKey;
-    }
-
-    document.getElementById('apiKey').addEventListener('change', function() {
-        localStorage.setItem('apiKey', this.value);
-    });
-
     setupMainTabs();
     await initAccount();
     setupFormHandlers();

@@ -385,8 +385,15 @@ Sem `session`, o refresh volta no corpo (aplicações, scripts, outros fronts).
 ### Página (`/`)
 
 `app/static/account.js` cuida da sessão e da aba Account; `script.js` faz todas as
-chamadas por `authFetch`, que manda o Bearer quando há login ou a API key do campo, e
-repete uma vez depois de um refresh quando recebe 401.
+chamadas por `authFetch`. A API key digitada no campo tem prioridade sobre o login (quem
+cola uma chave logado quer testar aquela chave); sem chave, vai o Bearer da sessão, e um
+401 da sessão dispara um refresh e uma nova tentativa. A aba Account usa `sessionFetch`,
+sempre com o login: `/me` e `/auth` não aceitam API key. Ao lado do campo, a página diz
+qual credencial está em uso.
+
+- A API key fica só no campo: não é gravada em `localStorage` nem `sessionStorage`, e
+  some ao recarregar. A cópia que versões anteriores deixavam no `localStorage` é apagada
+  ao carregar.
 
 - Access token só em memória; refresh no cookie HttpOnly (`session: "cookie"`). Uma flag
   sem segredo no `localStorage` diz se vale tentar restaurar a sessão ao carregar.

@@ -21,6 +21,8 @@ function storage(op, key, value) {
     }
 }
 
+const LEGACY_API_KEY = 'apiKey';  // older versions kept the typed key here, in clear text
+
 function apiKeyValue() {
     const input = document.getElementById('apiKey');
     return input ? input.value.trim() : '';
@@ -34,20 +36,47 @@ function hasCredential() {
     return isLoggedIn() || Boolean(apiKeyValue());
 }
 
+// A key typed in the field wins over the login: whoever pastes one while logged in wants
+// to try that key. The account calls (/me, /auth) go through sessionFetch instead.
 function authHeaders() {
-    if (auth.token) return { Authorization: `Bearer ${auth.token}` };
     const key = apiKeyValue();
-    return key ? { 'X-API-Key': key } : {};
+    if (key) return { 'X-API-Key': key };
+    return sessionHeaders();
 }
 
-// fetch with the current credential; a 401 on a login session refreshes once and retries.
-async function authFetch(url, options = {}) {
-    const send = () => fetch(url, { ...options, headers: { ...authHeaders(), ...(options.headers || {}) } });
+function sessionHeaders() {
+    return auth.token ? { Authorization: `Bearer ${auth.token}` } : {};
+}
+
+async function sendWith(headersOf, url, options) {
+    const send = () => fetch(url, { ...options, headers: { ...headersOf(), ...(options.headers || {}) } });
+    const usedSession = !headersOf()['X-API-Key'];
     let response = await send();
-    if (response.status === 401 && isLoggedIn() && await refreshSession()) {
+    // Only a dead access token is fixed by a refresh; a 401 on a key is the key's answer.
+    if (response.status === 401 && usedSession && isLoggedIn() && await refreshSession()) {
         response = await send();
     }
     return response;
+}
+
+function authFetch(url, options = {}) {
+    return sendWith(authHeaders, url, options);
+}
+
+function sessionFetch(url, options = {}) {
+    return sendWith(sessionHeaders, url, options);
+}
+
+function renderCredential() {
+    const key = apiKeyValue();
+    const status = document.getElementById('credentialStatus');
+    document.getElementById('apiKeyClear').classList.toggle('hidden', !key);
+    document.getElementById('apiKeyLabel').textContent = isLoggedIn()
+        ? 'API key (optional: takes priority over your login)'
+        : 'Or use an API key';
+    if (key) status.textContent = `Using: API key ••••${key.slice(-4)}`;
+    else if (isLoggedIn() && auth.me) status.textContent = `Using: login of ${auth.me.username}`;
+    else status.textContent = 'Not authenticated: log in or paste an API key';
 }
 
 function notifyAuthChange() {
@@ -123,7 +152,7 @@ async function refreshSession() {
 }
 
 async function loadMe() {
-    const response = await fetch('/me', { headers: authHeaders() });
+    const response = await fetch('/me', { headers: sessionHeaders() });
     auth.me = response.ok ? await response.json() : null;
 }
 
@@ -278,7 +307,7 @@ async function submitPasswordChange(event) {
     if (next !== form.querySelector('[name=confirm]').value) {
         return dialogMessage(form.dataset.message, 'The new passwords do not match');
     }
-    const response = await authFetch('/auth/change-password', {
+    const response = await sessionFetch('/auth/change-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ current_password: current, new_password: next }),
@@ -298,7 +327,7 @@ function renderAccountBar() {
     const loggedIn = isLoggedIn() && auth.me;
     document.getElementById('accountLoggedOut').classList.toggle('hidden', loggedIn);
     document.getElementById('accountLoggedIn').classList.toggle('hidden', !loggedIn);
-    document.getElementById('apiKeySection').classList.toggle('hidden', loggedIn);
+    renderCredential();
     document.querySelectorAll('[data-section="account"]').forEach(el => el.classList.toggle('hidden', !loggedIn));
     const option = document.querySelector('#mobileTabSelect option[value="account"]');
     if (option) option.hidden = !loggedIn;
@@ -351,7 +380,7 @@ function renderAccount() {
 
 async function loadKeys() {
     const tbody = document.getElementById('keyRows');
-    const response = await authFetch('/me/api-keys');
+    const response = await sessionFetch('/me/api-keys');
     if (!response.ok) {
         tbody.replaceChildren(el('tr', {}, el('td', { colspan: '6' }, await readError(response))));
         return;
@@ -379,7 +408,7 @@ async function loadKeys() {
 async function createKey(event) {
     event.preventDefault();
     const permissions = [...document.querySelectorAll('#keyPermissions input:checked')].map(i => i.value);
-    const response = await authFetch('/me/api-keys', {
+    const response = await sessionFetch('/me/api-keys', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: document.getElementById('keyName').value.trim(), permissions }),
@@ -395,7 +424,7 @@ async function createKey(event) {
 
 async function revokeKey(key) {
     if (!confirm(`Revoke the key "${key.name}"? Anything using it stops working.`)) return;
-    const response = await authFetch(`/me/api-keys/${encodeURIComponent(key.id)}`, { method: 'DELETE' });
+    const response = await sessionFetch(`/me/api-keys/${encodeURIComponent(key.id)}`, { method: 'DELETE' });
     if (!response.ok) return showToast(await readError(response), 'error');
     showToast('Key revoked');
     await loadMe();
@@ -428,7 +457,7 @@ function closeSecret() {
 
 async function startMfaEnrol(event) {
     event.preventDefault();
-    const response = await authFetch('/auth/mfa/enroll', {
+    const response = await sessionFetch('/auth/mfa/enroll', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password: document.getElementById('mfaPassword').value }),
@@ -444,7 +473,7 @@ async function startMfaEnrol(event) {
 
 async function confirmMfa(event) {
     event.preventDefault();
-    const response = await authFetch('/auth/mfa/confirm', {
+    const response = await sessionFetch('/auth/mfa/confirm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ code: document.getElementById('mfaConfirmCode').value.trim() }),
@@ -471,7 +500,7 @@ function cancelMfaEnrol() {
 async function mfaAction(event, url) {
     event.preventDefault();
     const form = event.target;
-    const response = await authFetch(url, {
+    const response = await sessionFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -535,7 +564,16 @@ function setupAccount() {
     document.getElementById('mfaCancel').addEventListener('click', cancelMfaEnrol);
     document.getElementById('mfaCodesForm').addEventListener('submit', regenerateCodes);
     document.getElementById('mfaDisableForm').addEventListener('submit', disableMfa);
-    document.getElementById('apiKey').addEventListener('change', notifyAuthChange);
+    const keyInput = document.getElementById('apiKey');
+    keyInput.addEventListener('input', renderCredential);
+    keyInput.addEventListener('change', notifyAuthChange);
+    document.getElementById('apiKeyClear').addEventListener('click', () => {
+        keyInput.value = '';
+        renderCredential();
+        notifyAuthChange();
+    });
+    // The key now lives only in the field; drop the copy older versions left behind.
+    storage('del', LEGACY_API_KEY);
 
     // A forced password change cannot be dismissed: the account is unusable until it is done.
     document.getElementById('passwordDialog').addEventListener('cancel', e => {
