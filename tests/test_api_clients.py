@@ -125,9 +125,20 @@ class TestApiClientRepository:
     async def test_get_by_key_hash_unknown_returns_none(self, repo, seeded_permissions):
         assert await repo.get_by_key_hash(hash_api_key("nao-existe")) is None
 
-    async def test_get_by_name(self, repo, seeded_permissions):
-        await self._create(repo, seeded_permissions, "scraping-api")
-        assert (await repo.get_by_name("scraping-api")) is not None
+    async def test_get_active_by_name(self, repo, seeded_permissions):
+        client = await self._create(repo, seeded_permissions, "scraping-api")
+        assert (await repo.get_active_by_name("scraping-api", None)) is not None
+        await repo.revoke(client.id)
+        assert (await repo.get_active_by_name("scraping-api", None)) is None
+
+    async def test_revoked_name_can_be_reused(self, repo, seeded_permissions):
+        client = await self._create(repo, seeded_permissions, "reusado")
+        await repo.revoke(client.id)
+        await repo.create(
+            name="reusado",
+            key_hash=hash_api_key("outra-chave"),
+            permission_ids=[seeded_permissions[TremPermission.FILE_EDITOR.value]],
+        )
 
     async def test_get_by_id_malformed_returns_none(self, repo, seeded_permissions):
         assert await repo.get_by_id("nao-e-uuid") is None
@@ -315,7 +326,7 @@ class TestApiClientProfileSets:
             )
         assert exc.value.status_code == 400
         assert "trem:file_editor" in exc.value.message
-        assert await service._repo.get_by_name("escalate") is None
+        assert await service._repo.get_active_by_name("escalate", str(owner.id)) is None
 
     async def test_unknown_owner_is_rejected(self, service, seeded_permissions):
         with pytest.raises(Exception) as exc:

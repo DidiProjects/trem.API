@@ -33,6 +33,7 @@ class ApiClient:
     created_at: datetime
     # Usuário dono da chave; None para chave de serviço, sem pessoa por trás.
     user_id: Optional[str] = None
+    key_hint: Optional[str] = None
 
     @property
     def is_active(self) -> bool:
