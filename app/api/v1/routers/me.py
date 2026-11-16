@@ -21,7 +21,7 @@ router = APIRouter(prefix="/me", tags=["Me"])
 
 
 @router.get("", response_model=MeResponse)
-async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db, scope="function")):
     """Who is logged in; works before the first password change, to tell the page to ask for it."""
     keys = await ApiClientService(db).list_own_keys(user.id)
     return MeResponse(
@@ -39,7 +39,7 @@ async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(
 
 
 @router.get("/api-keys", response_model=list[OwnApiKeyResponse])
-async def list_keys(user: User = Depends(get_current_active_user), db: AsyncSession = Depends(get_db)):
+async def list_keys(user: User = Depends(get_current_active_user), db: AsyncSession = Depends(get_db, scope="function")):
     return [OwnApiKeyResponse.model_validate(k) for k in await ApiClientService(db).list_own_keys(user.id)]
 
 
@@ -47,7 +47,7 @@ async def list_keys(user: User = Depends(get_current_active_user), db: AsyncSess
 async def create_key(
     body: OwnApiKeyCreate,
     user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ):
     """The full key is in this response only; the database keeps its hash."""
     try:
@@ -60,7 +60,7 @@ async def create_key(
 
 
 @router.delete("/api-keys/{key_id}", response_model=MessageResponse)
-async def revoke_key(key_id: str, user: User = Depends(get_current_active_user), db: AsyncSession = Depends(get_db)):
+async def revoke_key(key_id: str, user: User = Depends(get_current_active_user), db: AsyncSession = Depends(get_db, scope="function")):
     try:
         await ApiClientService(db).revoke_own_key(user.id, key_id)
     except AppException as e:

@@ -19,7 +19,7 @@ def _to_response(user) -> UserResponse:
 @router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def create_user(
     body: UserCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     _: User = Depends(require_admin),
 ):
     service = UserService(db)
@@ -34,7 +34,7 @@ async def create_user(
 async def list_users(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     _: User = Depends(require_admin),
 ):
     service = UserService(db)
@@ -50,7 +50,7 @@ async def list_users(
 @router.get("/{user_id}", response_model=UserResponse)
 async def get_user(
     user_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     _: User = Depends(require_admin),
 ):
     service = UserService(db)
@@ -64,7 +64,7 @@ async def get_user(
 @router.post("/{user_id}/send-provisional-password", response_model=MessageResponse)
 async def send_provisional_password(
     user_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     _: User = Depends(require_admin),
 ):
     service = UserService(db)
