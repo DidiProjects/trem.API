@@ -149,18 +149,24 @@ class UserRepository(BaseRepository, IUserRepository):
         user_id: str,
         token_hash: str,
         expires_at: datetime,
+        application_id: Union[str, uuid.UUID],
+        family_id: Optional[Union[str, uuid.UUID]] = None,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
-    ) -> None:
+    ) -> RefreshTokenModel:
         token = RefreshTokenModel(
+            id=uuid.uuid4(),
             user_id=_as_uuid(user_id),
             token_hash=token_hash,
             expires_at=expires_at,
+            application_id=_as_uuid(application_id),
             ip_address=ip_address,
             user_agent=user_agent,
         )
+        token.family_id = _as_uuid(family_id) if family_id else token.id
         self._session.add(token)
         await self._session.flush()
+        return token
 
     async def get_refresh_token(self, token_hash: str) -> Optional[RefreshTokenModel]:
         result = await self._session.execute(
@@ -168,10 +174,29 @@ class UserRepository(BaseRepository, IUserRepository):
         )
         return result.scalar_one_or_none()
 
-    async def revoke_refresh_token(self, token_hash: str) -> None:
+    async def claim_refresh_token(self, token_id: uuid.UUID) -> bool:
+        """
+        Revokes a live token and reports whether this call did it. Two refreshes racing
+        with the same token cannot both succeed: the loser sees a reuse.
+        """
+        result = await self._session.execute(
+            update(RefreshTokenModel)
+            .where(RefreshTokenModel.id == token_id, RefreshTokenModel.revoked.is_(False))
+            .values(revoked=True)
+        )
+        return result.rowcount == 1
+
+    async def set_refresh_token_successor(self, token_id: uuid.UUID, successor_id: uuid.UUID) -> None:
         await self._session.execute(
             update(RefreshTokenModel)
-            .where(RefreshTokenModel.token_hash == token_hash)
+            .where(RefreshTokenModel.id == token_id)
+            .values(replaced_by=successor_id)
+        )
+
+    async def revoke_refresh_token_family(self, family_id: uuid.UUID) -> None:
+        await self._session.execute(
+            update(RefreshTokenModel)
+            .where(RefreshTokenModel.family_id == family_id)
             .values(revoked=True)
         )
 

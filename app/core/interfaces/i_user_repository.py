@@ -62,9 +62,11 @@ class IUserRepository(ABC):
         user_id: str,
         token_hash: str,
         expires_at: datetime,
+        application_id,
+        family_id=None,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
-    ) -> None:
+    ):
         ...
 
     @abstractmethod
@@ -72,7 +74,15 @@ class IUserRepository(ABC):
         ...
 
     @abstractmethod
-    async def revoke_refresh_token(self, token_hash: str) -> None:
+    async def claim_refresh_token(self, token_id) -> bool:
+        ...
+
+    @abstractmethod
+    async def set_refresh_token_successor(self, token_id, successor_id) -> None:
+        ...
+
+    @abstractmethod
+    async def revoke_refresh_token_family(self, family_id) -> None:
         ...
 
     @abstractmethod

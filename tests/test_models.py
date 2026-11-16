@@ -229,6 +229,8 @@ class TestRefreshTokenModel:
             "user_id": user.id,
             "token_hash": token_hash,
             "expires_at": datetime.now(timezone.utc) + timedelta(days=7),
+            "family_id": uuid.uuid4(),
+            "application_id": user.permissions[0].application_id,
         }
         params.update(kwargs)
         return RefreshTokenModel(**params)

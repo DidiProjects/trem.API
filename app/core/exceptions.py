@@ -51,6 +51,17 @@ class UnknownPermissionsError(AppException):
         super().__init__(f"Permissões não encontradas: {', '.join(sorted(keys))}", status_code=400)
 
 
+class TooManyLoginAttemptsError(AppException):
+    def __init__(self, retry_after: int):
+        super().__init__("Muitas tentativas de login. Tente novamente mais tarde.", status_code=429)
+        self.retry_after = retry_after
+
+
+class ApplicationAccessDeniedError(AppException):
+    def __init__(self):
+        super().__init__("Sem acesso a esta aplicação", status_code=403)
+
+
 class InsufficientPermissionsError(AppException):
     def __init__(self):
         super().__init__("Permissão insuficiente para este recurso", status_code=403)
