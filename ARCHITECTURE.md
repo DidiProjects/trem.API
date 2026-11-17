@@ -430,7 +430,7 @@ sobrescreve; o primeiro item do `X-Forwarded-For` é escolhido pelo cliente.
 ```
 1. POST /auth/register {username, email, password}
    → conta pending_verification, sem permissões; resposta 202 sempre igual
-   → e-mail com link {API_URL}/#verify-email=<token> (256 bits, uso único, 24 h)
+   → e-mail com link {FRONTEND_URL}/#verify-email=<token> (256 bits, uso único, 24 h)
 
 2. POST /auth/verify-email {token}
    → status pending_approval, email_verified_at preenchido
@@ -467,7 +467,7 @@ sobrescreve; o primeiro item do `X-Forwarded-For` é escolhido pelo cliente.
 ```
 1. POST /auth/forgot-password {email}
    → 202 sempre igual; só conta active recebe o link
-   → e-mail com link {API_URL}/#reset-password=<token> (256 bits, uso único, 60 min)
+   → e-mail com link {FRONTEND_URL}/#reset-password=<token> (256 bits, uso único, 60 min)
 
 2. POST /auth/reset-password {token, new_password}
    → senha trocada, must_change_password=False

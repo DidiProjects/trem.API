@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     # Legacy API key — usado para operações administrativas de bootstrap
     API_KEY: str = "change-me"
     API_URL: str = "http://localhost:3002"
+    # Where the e-mail links (confirm sign-up, reset password, log in) open; defaults to API_URL.
+    FRONTEND_URL: str = ""
 
     # JWT RS256 — gere com scripts/generate_keys.py
     # Armazene as chaves PEM com \n literal no .env
@@ -119,6 +121,9 @@ class Settings(BaseSettings):
 
     def jwt_issuer(self) -> str:
         return self.JWT_ISSUER or self.API_URL
+
+    def frontend_url(self) -> str:
+        return (self.FRONTEND_URL or self.API_URL).rstrip("/")
 
 
 @lru_cache()

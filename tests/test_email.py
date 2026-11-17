@@ -216,6 +216,14 @@ class TestSmtpEmailClientProvisionalPassword:
         assert "joao" in body
         assert "Prov@123" in body
 
+    async def test_body_links_to_the_login(self, smtp_server, configured_settings):
+        await SmtpEmailClient().send_provisional_password(
+            to="usuario@example.com", username="joao", provisional_password="Prov@123"
+        )
+        sent = smtp_server.send_message.call_args[0][0]
+        body = sent.get_payload()[0].get_payload(decode=True).decode()
+        assert f"Entrar: {configured_settings.frontend_url()}" in body
+
     async def test_without_credentials_raises(self, smtp_server):
         unconfigured = _settings_with(EMAIL_SMTP_USER="", EMAIL_SMTP_PASSWORD="")
         with patch(

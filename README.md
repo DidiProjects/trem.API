@@ -193,6 +193,10 @@ POST /auth/forgot-password      {"email"}                            → 202
 POST /auth/reset-password       {"token", "new_password"}            (from the e-mail link)
 ```
 
+The e-mail links (confirm sign-up, reset password, log in) open at `FRONTEND_URL`, or at
+`API_URL` when it is empty. The front must handle `#verify-email=` and `#reset-password=`
+fragments on its root.
+
 Second factor (TOTP):
 ```
 POST /auth/mfa/enroll           {"password"}                → {"secret", "otpauth_uri"}

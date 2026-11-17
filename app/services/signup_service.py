@@ -62,10 +62,10 @@ class SignupService:
 
         by_email = await self._free_if_stale(await self._users.get_by_email(email))
         if by_email:
-            self._queue(self._email.send_signup_conflict, to=email, reason="email", login_url=settings.API_URL)
+            self._queue(self._email.send_signup_conflict, to=email, reason="email", login_url=settings.frontend_url())
             return
         if await self._free_if_stale(await self._users.get_by_username(username)):
-            self._queue(self._email.send_signup_conflict, to=email, reason="username", login_url=settings.API_URL)
+            self._queue(self._email.send_signup_conflict, to=email, reason="username", login_url=settings.frontend_url())
             return
 
         user = await self._users.create(
@@ -115,7 +115,7 @@ class SignupService:
             expires_at=now + timedelta(hours=settings.EMAIL_TOKEN_TTL_HOURS),
         )
         # In the fragment, the token never reaches a server log or a Referer header.
-        link = f"{settings.API_URL.rstrip('/')}/#verify-email={raw}"
+        link = f"{settings.frontend_url()}/#verify-email={raw}"
         self._queue(
             self._email.send_email_verification,
             to=user.email, username=user.username, link=link, ttl_hours=settings.EMAIL_TOKEN_TTL_HOURS,
