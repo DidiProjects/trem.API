@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api.v1.dependencies import get_current_user
+from app.core.config import get_settings
 from app.core.exceptions import (
     ApplicationAccessDeniedError,
     InvalidCredentialsError,
@@ -97,10 +98,24 @@ class TestLogin:
             )
         assert response.status_code == 200
         assert "refresh_token" not in response.json()
-        cookie = response.headers["set-cookie"]
-        assert cookie.startswith("trem_refresh=raw-refresh")
-        for attribute in ("HttpOnly", "Secure", "SameSite=strict", "Path=/auth"):
-            assert attribute.lower() in cookie.lower()
+        session, legacy = response.headers.get_list("set-cookie")
+        assert session.startswith("trem_refresh=raw-refresh")
+        for attribute in ("HttpOnly", "Secure", "SameSite=none", "Partitioned", "Path=/auth"):
+            assert attribute.lower() in session.lower()
+        # the unpartitioned cookie of before is expired, or it would be sent alongside
+        assert legacy.startswith("trem_refresh=") and "max-age=0" in legacy.lower()
+        assert "partitioned" not in legacy.lower() and "samesite=strict" in legacy.lower()
+
+    def test_plain_http_development_keeps_a_same_site_cookie(self, auth_client, monkeypatch):
+        monkeypatch.setattr(get_settings(), "COOKIE_SECURE", False)
+        with patch("app.api.v1.routers.auth.AuthService") as Mock:
+            Mock.return_value.login = AsyncMock(return_value=(_tokens(), "raw-refresh"))
+            response = auth_client.post(
+                "/auth/login", json={"username": "u", "password": "p", "session": "cookie"}
+            )
+        [cookie] = response.headers.get_list("set-cookie")
+        assert "samesite=strict" in cookie.lower()
+        assert "secure" not in cookie.lower() and "partitioned" not in cookie.lower()
 
     def test_audience_is_passed_to_the_service(self, auth_client):
         with patch("app.api.v1.routers.auth.AuthService") as Mock:
@@ -196,7 +211,11 @@ class TestRefresh:
             Mock.return_value.refresh = AsyncMock(side_effect=InvalidCredentialsError())
             response = auth_client.post("/auth/refresh", headers=CSRF)
         assert response.status_code == 401
-        assert 'trem_refresh=""' in response.headers["set-cookie"] or "Max-Age=0" in response.headers["set-cookie"]
+        assert response.json()["detail"]
+        cleared = response.headers.get_list("set-cookie")
+        assert len(cleared) == 2
+        assert all(c.startswith("trem_refresh=") and "max-age=0" in c.lower() for c in cleared)
+        assert any("partitioned" in c.lower() for c in cleared)
 
     def test_invalid_body_token_is_401(self, auth_client):
         with patch("app.api.v1.routers.auth.AuthService") as Mock:

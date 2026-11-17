@@ -31,8 +31,8 @@ router = APIRouter(prefix="/auth", tags=["Auth"])
 well_known_router = APIRouter(prefix="/.well-known", tags=["Auth"])
 
 # A cross-site form cannot set custom headers, and a cross-origin fetch that does is
-# preflighted and refused. With SameSite=Strict on the cookie, this closes CSRF on the
-# endpoints that act on the session cookie.
+# preflighted, which CORS answers only for CORS_ORIGINS. This closes CSRF on the endpoints
+# that act on the session cookie, now that the cookie also travels cross-site.
 CSRF_HEADER = "X-Requested-With"
 CSRF_VALUE = "trem"
 
@@ -44,28 +44,38 @@ def http_error(e: AppException) -> HTTPException:
     return HTTPException(status_code=e.status_code, detail=e.message, headers=headers)
 
 
-def _set_session_cookie(response: Response, raw_refresh: str) -> None:
+def _cookie_attributes() -> dict:
+    """Over HTTPS the cookie is cross-site, for fronts on other domains that call this API
+    directly. Partitioned (CHIPS) keeps it apart per front site, and Chrome and Firefox
+    accept it where they block third-party cookies. Plain-HTTP development has no
+    SameSite=None (it requires Secure) and runs front and API on localhost, one site."""
+    if get_settings().COOKIE_SECURE:
+        return {"secure": True, "samesite": "none", "partitioned": True}
+    return {"secure": False, "samesite": "strict", "partitioned": False}
+
+
+def _write_session_cookie(response: Response, value: str, max_age: int) -> None:
     settings = get_settings()
+    attributes = _cookie_attributes()
     response.set_cookie(
-        key=settings.REFRESH_COOKIE_NAME,
-        value=raw_refresh,
-        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
-        path="/auth",
-        secure=settings.COOKIE_SECURE,
-        httponly=True,
-        samesite="strict",
+        key=settings.REFRESH_COOKIE_NAME, value=value, max_age=max_age, path="/auth", httponly=True, **attributes
     )
+    if attributes["partitioned"]:
+        # A browser can still hold the unpartitioned SameSite=Strict cookie of before:
+        # sent along with the partitioned one, the older (rotated) token would read as
+        # reuse and end the login. Expire it whenever the session cookie is written.
+        response.set_cookie(
+            key=settings.REFRESH_COOKIE_NAME, value="", max_age=0, path="/auth",
+            secure=True, httponly=True, samesite="strict",
+        )
+
+
+def _set_session_cookie(response: Response, raw_refresh: str) -> None:
+    _write_session_cookie(response, raw_refresh, get_settings().REFRESH_TOKEN_EXPIRE_DAYS * 86400)
 
 
 def _clear_session_cookie(response: Response) -> None:
-    settings = get_settings()
-    response.delete_cookie(
-        key=settings.REFRESH_COOKIE_NAME,
-        path="/auth",
-        secure=settings.COOKIE_SECURE,
-        httponly=True,
-        samesite="strict",
-    )
+    _write_session_cookie(response, "", 0)
 
 
 def _refresh_from(request: Request, body: Optional[RefreshRequest]) -> tuple[str, bool]:
@@ -202,17 +212,13 @@ async def refresh(
         )
     except AppException as e:
         error = http_error(e)
-        if from_cookie:
-            error.headers = {**(error.headers or {}), "set-cookie": _expired_cookie_header()}
-        raise error
+        if not from_cookie:
+            raise error
+        rejected = JSONResponse({"detail": error.detail}, status_code=error.status_code, headers=error.headers)
+        _clear_session_cookie(rejected)
+        return rejected
 
     return _place(tokens, raw_refresh, "cookie" if from_cookie else "body", response)
-
-
-def _expired_cookie_header() -> str:
-    probe = Response()
-    _clear_session_cookie(probe)
-    return probe.headers["set-cookie"]
 
 
 @router.post("/change-password", response_model=MessageResponse)

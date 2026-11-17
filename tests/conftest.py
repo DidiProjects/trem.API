@@ -51,6 +51,8 @@ os.environ.update(
         "AIRLINE_API_KEY": "",
         # Tests never reach Have I Been Pwned; test_breached_password turns it on with a fake transport.
         "PWNED_PASSWORDS_ENABLED": "False",
+        # The CORS middleware is installed at import; test_cors checks it with this origin.
+        "CORS_ORIGINS": "https://front.example, http://localhost:3004/",
     }
 )
 
