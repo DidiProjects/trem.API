@@ -61,7 +61,7 @@ class PasswordResetService:
             expires_at=now + timedelta(minutes=settings.PASSWORD_RESET_TTL_MINUTES),
         )
         # In the fragment, the token never reaches a server log or a Referer header.
-        link = f"{settings.API_URL.rstrip('/')}/#reset-password={raw}"
+        link = f"{settings.frontend_url()}/#reset-password={raw}"
         self._queue(
             self._email.send_password_reset,
             to=user.email, username=user.username, link=link,
