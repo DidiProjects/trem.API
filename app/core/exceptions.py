@@ -128,3 +128,8 @@ class EmailSendError(AppException):
         if detail:
             msg = f"{msg}: {detail}"
         super().__init__(msg, status_code=503)
+
+
+class InvalidLogoError(AppException):
+    def __init__(self, message: str):
+        super().__init__(message, status_code=400)

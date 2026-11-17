@@ -244,6 +244,27 @@ POST /admin/applications/{slug}/permissions {"name"}
 DELETE /admin/applications/{slug}[/permissions/{name}]
 ```
 
+### Hub catalog (trem.FRONT)
+
+The services trem.FRONT lists after login. Each one is tied to the permission `hub:<slug>`,
+created and removed with it.
+
+```
+GET    /hub/services                      the logged-in account's services (enabled, with an address, granted)
+GET    /hub/services/{slug}/logo?v=       public, for <img>
+GET    /admin/hub/services                POST /admin/hub/services {"slug", "name", "description", "url", "enabled"}
+PATCH  /admin/hub/services/{slug}         only the fields sent; null clears description and url
+PUT    /admin/hub/services/order          {"slugs": [every service, in order]}
+DELETE /admin/hub/services/{slug}         with its permission and grants
+PUT    /admin/hub/services/{slug}/logo    multipart "file": PNG, WebP or SVG, up to 256 KB
+DELETE /admin/hub/services/{slug}/logo
+PUT    /admin/hub/services/{slug}/users/{id}   grant;  DELETE: revoke
+```
+
+Granting or revoking a service does not end the account's sessions: the catalog is read
+from the database on each visit, and `hub:*` never travels in a `trem` token. The logo type
+comes from the bytes, not the declared Content-Type; SVGs are served with a sandboxing CSP.
+
 Sign-up: the account waits for e-mail confirmation, then for an admin to approve it and
 grant permissions. `register`, `resend-verification` and `forgot-password` answer the same
 whether or not the e-mail or username exists. A reset link lasts 60 minutes, works once, ends

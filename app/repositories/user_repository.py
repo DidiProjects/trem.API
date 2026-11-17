@@ -222,6 +222,34 @@ class UserRepository(BaseRepository, IUserRepository):
         if orm is not None:
             await self._session.refresh(orm, ["permissions"])
 
+    async def add_permission(self, user_id: str, permission_id, granted_by: Optional[str]) -> None:
+        uid, pid = _as_uuid(user_id), _as_uuid(permission_id)
+        exists = (await self._session.execute(
+            select(user_permissions.c.permission_id).where(
+                user_permissions.c.user_id == uid, user_permissions.c.permission_id == pid
+            )
+        )).first()
+        if not exists:
+            await self._session.execute(
+                user_permissions.insert().values(user_id=uid, permission_id=pid, granted_by=_as_uuid(granted_by))
+            )
+        await self._refresh_permissions(uid)
+
+    async def remove_permission(self, user_id: str, permission_id) -> None:
+        await self._session.execute(
+            user_permissions.delete().where(
+                user_permissions.c.user_id == _as_uuid(user_id),
+                user_permissions.c.permission_id == _as_uuid(permission_id),
+            )
+        )
+        await self._refresh_permissions(_as_uuid(user_id))
+
+    async def _refresh_permissions(self, uid) -> None:
+        # The ORM relationship cached on this session must not hide the change.
+        orm = await self._session.get(UserModel, uid)
+        if orm is not None:
+            await self._session.refresh(orm, ["permissions"])
+
     # --- Refresh tokens ---
 
     async def create_refresh_token(
