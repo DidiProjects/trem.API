@@ -571,6 +571,30 @@ a aplicação `trem` e suas permissões (usadas pelo código) não podem ser rem
 Trocar permissões encerra as sessões porque os access tokens carregam as permissões
 que as outras aplicações leem; os já emitidos valem até expirar (15 min).
 
+### Catálogo do trem.FRONT (`/hub`, `/admin/hub`)
+
+Tabela `hub_services`: nome, descrição, endereço, ativo, ordem e logo (bytes no banco,
+tipo lido dos bytes: PNG, WebP ou SVG, até 256 KB). Cada serviço pertence a uma permissão
+`hub:<slug>` (FK com `ON DELETE CASCADE`): criar o serviço cria a permissão, removê-lo
+remove a permissão e as concessões.
+
+| Método | Path | Descrição |
+|--------|------|-----------|
+| GET    | `/hub/services` | Serviços da conta logada: ativos, com endereço e concedidos |
+| GET    | `/hub/services/{slug}/logo?v=` | Público, para `<img>`; `v` (hash) torna a URL imutável |
+| GET/POST | `/admin/hub/services` | Lista todos / cria com a permissão |
+| PATCH  | `/admin/hub/services/{slug}` | Só os campos enviados |
+| PUT    | `/admin/hub/services/order` | Nova ordem, com todos os serviços |
+| DELETE | `/admin/hub/services/{slug}` | Remove com permissão e concessões |
+| PUT/DELETE | `/admin/hub/services/{slug}/logo` | Envia (multipart `file`) / remove |
+| PUT/DELETE | `/admin/hub/services/{slug}/users/{id}` | Libera / tira o acesso da conta |
+
+Liberar ou tirar um serviço **não** encerra sessões, ao contrário de
+`PUT /admin/users/{id}/permissions`: o catálogo é lido do banco a cada visita e `hub:*`
+não vai em token da `trem`. O SVG é servido com CSP `sandbox` e `nosniff`: aberto direto
+não executa nada, e dentro de `<img>` o navegador já não executaria. A migration 010 traz
+os cinco serviços iniciais com logo e sem endereço (fora do catálogo até o admin preencher).
+
 ### MFA (`/auth/mfa`) — usuário logado
 
 | Método | Path | Descrição |

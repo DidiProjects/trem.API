@@ -8,6 +8,8 @@ from sqlalchemy import (
     Column,
     ForeignKey,
     Index,
+    Integer,
+    LargeBinary,
     String,
     Table,
     Text,
@@ -363,3 +365,40 @@ class RefreshTokenModel(Base):
             f"RefreshTokenModel(id={self.id!r}, user_id={self.user_id!r}, "
             f"revoked={self.revoked!r})"
         )
+
+
+class HubServiceModel(Base):
+    """A self-hosted service in the trem.FRONT catalog. Its permission hub:<slug> says who sees it."""
+
+    __tablename__ = "hub_services"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    permission_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("permissions.id", ondelete="CASCADE"), unique=True, nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Null until the admin sets it: the catalog leaves the service out meanwhile.
+    url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("true"))
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    logo: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    logo_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # Start of the logo's SHA-256: goes in the logo URL, so a new logo is a new URL and the
+    # old one can be cached for good.
+    logo_version: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, default=_now, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, default=_now, onupdate=_now, server_default=func.now()
+    )
+
+    permission: Mapped["PermissionModel"] = relationship("PermissionModel", lazy="joined")
+
+    @property
+    def slug(self) -> str:
+        return self.permission.name
+
+    def __repr__(self) -> str:  # without the logo bytes
+        return f"HubServiceModel(id={self.id!r}, name={self.name!r})"

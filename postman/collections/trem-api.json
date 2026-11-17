@@ -1237,6 +1237,343 @@
       ]
     },
     {
+      "name": "Hub catalog",
+      "item": [
+        {
+          "name": "GET /hub/services",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/hub/services",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "hub",
+                "services"
+              ]
+            },
+            "description": "Catalog\n\nThe services this account may open: enabled, with an address, and granted hub:<slug>."
+          }
+        },
+        {
+          "name": "GET /hub/services/:slug/logo",
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "noauth"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/hub/services/:slug/logo",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "hub",
+                "services",
+                ":slug",
+                "logo"
+              ],
+              "variable": [
+                {
+                  "key": "slug",
+                  "value": ""
+                }
+              ],
+              "query": [
+                {
+                  "key": "v",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Logo\n\nPublic, for <img>: a logo reveals nothing the catalog's front page would not."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin: hub catalog",
+      "item": [
+        {
+          "name": "GET /admin/hub/services",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/admin/hub/services",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "hub",
+                "services"
+              ]
+            },
+            "description": "List Services"
+          }
+        },
+        {
+          "name": "POST /admin/hub/services",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"slug\": \"\",\n  \"name\": \"\",\n  \"description\": \"\",\n  \"url\": \"\",\n  \"enabled\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/hub/services",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "hub",
+                "services"
+              ]
+            },
+            "description": "Create Service\n\nCreates the service and its permission hub:<slug>."
+          }
+        },
+        {
+          "name": "PUT /admin/hub/services/order",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"slugs\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/hub/services/order",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "hub",
+                "services",
+                "order"
+              ]
+            },
+            "description": "Reorder Services"
+          }
+        },
+        {
+          "name": "PATCH /admin/hub/services/:slug",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"\",\n  \"description\": \"\",\n  \"url\": \"\",\n  \"enabled\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/hub/services/:slug",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "hub",
+                "services",
+                ":slug"
+              ],
+              "variable": [
+                {
+                  "key": "slug",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Update Service"
+          }
+        },
+        {
+          "name": "DELETE /admin/hub/services/:slug",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/admin/hub/services/:slug",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "hub",
+                "services",
+                ":slug"
+              ],
+              "variable": [
+                {
+                  "key": "slug",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Delete Service\n\nRemoves the service, its permission and every grant of it."
+          }
+        },
+        {
+          "name": "PUT /admin/hub/services/:slug/logo",
+          "request": {
+            "method": "PUT",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "",
+                  "description": "PNG, WebP ou SVG, até 256 KB"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/hub/services/:slug/logo",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "hub",
+                "services",
+                ":slug",
+                "logo"
+              ],
+              "variable": [
+                {
+                  "key": "slug",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Upload Logo"
+          }
+        },
+        {
+          "name": "DELETE /admin/hub/services/:slug/logo",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/admin/hub/services/:slug/logo",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "hub",
+                "services",
+                ":slug",
+                "logo"
+              ],
+              "variable": [
+                {
+                  "key": "slug",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Delete Logo"
+          }
+        },
+        {
+          "name": "PUT /admin/hub/services/:slug/users/:user_id",
+          "request": {
+            "method": "PUT",
+            "url": {
+              "raw": "{{baseUrl}}/admin/hub/services/:slug/users/:user_id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "hub",
+                "services",
+                ":slug",
+                "users",
+                ":user_id"
+              ],
+              "variable": [
+                {
+                  "key": "slug",
+                  "value": ""
+                },
+                {
+                  "key": "user_id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Grant Service\n\nLets the account see the service. Its sessions go on: the catalog is read live."
+          }
+        },
+        {
+          "name": "DELETE /admin/hub/services/:slug/users/:user_id",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/admin/hub/services/:slug/users/:user_id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "hub",
+                "services",
+                ":slug",
+                "users",
+                ":user_id"
+              ],
+              "variable": [
+                {
+                  "key": "slug",
+                  "value": ""
+                },
+                {
+                  "key": "user_id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Revoke Service"
+          }
+        }
+      ]
+    },
+    {
       "name": "Users (legacy admin)",
       "item": [
         {

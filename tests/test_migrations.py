@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 pytestmark = pytest.mark.skipif(not DB_URL, reason="TEST_DATABASE_URL not set")
 
+PNG_LOGO = bytes([0x89]) + b"PNG" + bytes([13, 10, 26, 10]) + bytes(8)
 ALL_PROFILES = {"file_editor", "airline_company", "ai", "linkedin_scraper"}
 
 
@@ -367,6 +368,30 @@ class TestAppOnMigratedSchema:
             id=uuid.UUID(existing.id),
         )[0][0] == "file_editor"
 
+    def test_hub_catalog_on_postgres(self, alembic_cfg):
+        from app.repositories.user_repository import UserRepository
+        from app.services.hub_service import HubService
+
+        command.upgrade(alembic_cfg, "head")
+        uid = uuid.uuid4()
+        sql("INSERT INTO users (id, username, password_hash, status) VALUES (:id, 'ana', 'x', 'active')", id=uid)
+
+        async def scenario(session):
+            hub = HubService(session)
+            await hub.update("immich", {"url": "http://10.0.0.1:2283"})
+            await hub.create("jellyfin", "Jellyfin", None, "https://tv.example", True)
+            await hub.set_logo("jellyfin", PNG_LOGO)
+            admin = await UserRepository(session).get_by_id(str(uid))
+            for slug in ("immich", "jellyfin", "radarr"):
+                await hub.grant(admin, slug, str(uid))
+            await hub.reorder(["jellyfin", "immich", "radarr", "sonarr", "prowlarr", "qbittorrent"])
+            await hub.delete("sonarr")
+            return [s.slug for s in await hub.list_all()]
+
+        assert self.run(scenario) == ["jellyfin", "immich", "radarr", "prowlarr", "qbittorrent"]
+        assert user_permissions(uid) == {"hub:immich", "hub:jellyfin", "hub:radarr"}
+        assert sql("SELECT logo_type FROM hub_services WHERE name = 'Jellyfin'")[0][0] == "image/png"
+
     def test_login_refresh_and_reuse_on_postgres(self, alembic_cfg):
         """The atomic claim is an UPDATE ... WHERE revoked = false: its rowcount matters on PG."""
         from app.core.exceptions import InvalidCredentialsError
@@ -617,3 +642,60 @@ class TestUpgrade009:
         names = sorted(r[0] for r in sql("SELECT name FROM api_clients"))
         assert len(set(names)) == 2 and all(n.startswith("notebook-") for n in names)
         command.upgrade(alembic_cfg, "009")
+
+
+class TestUpgrade010:
+    def _hub_permission(self, name):
+        sql("""
+            INSERT INTO applications (slug, name) VALUES ('hub', 'trem.FRONT') ON CONFLICT (slug) DO NOTHING
+        """)
+        sql("""
+            INSERT INTO permissions (name, application_id) SELECT :n, id FROM applications WHERE slug = 'hub'
+        """, n=name)
+
+    def test_seeds_the_known_services_without_an_address(self, alembic_cfg):
+        command.upgrade(alembic_cfg, "010")
+        rows = sql("""
+            SELECT p.name, s.name, s.url, s.enabled, s.position, s.logo_type, length(s.logo) > 0
+            FROM hub_services s JOIN permissions p ON p.id = s.permission_id ORDER BY s.position
+        """)
+        assert [r[0] for r in rows] == ["immich", "radarr", "sonarr", "prowlarr", "qbittorrent"]
+        assert all(r[2] is None and r[3] and r[5] == "image/svg+xml" and r[6] for r in rows)
+
+    def test_existing_hub_permissions_and_grants_are_kept(self, alembic_cfg):
+        command.upgrade(alembic_cfg, "009")
+        self._hub_permission("immich")
+        self._hub_permission("jellyfin")
+        uid = uuid.uuid4()
+        sql("INSERT INTO users (id, username, password_hash) VALUES (:id, 'ana', 'x')", id=uid)
+        sql("""
+            INSERT INTO user_permissions (user_id, permission_id)
+            SELECT :u, p.id FROM permissions p JOIN applications a ON a.id = p.application_id
+            WHERE a.slug = 'hub' AND p.name IN ('immich', 'jellyfin')
+        """, u=uid)
+
+        command.upgrade(alembic_cfg, "010")
+
+        assert user_permissions(uid) == {"hub:immich", "hub:jellyfin"}
+        rows = dict(sql("""
+            SELECT p.name, s.position FROM hub_services s JOIN permissions p ON p.id = s.permission_id
+        """))
+        assert set(rows) == {"immich", "radarr", "sonarr", "prowlarr", "qbittorrent", "jellyfin"}
+        assert rows["jellyfin"] == 5
+        assert sql("SELECT count(*) FROM applications WHERE slug = 'hub'")[0][0] == 1
+
+    def test_deleting_the_permission_deletes_the_service(self, alembic_cfg):
+        command.upgrade(alembic_cfg, "010")
+        sql("""
+            DELETE FROM permissions WHERE name = 'radarr'
+            AND application_id = (SELECT id FROM applications WHERE slug = 'hub')
+        """)
+        assert sql("SELECT count(*) FROM hub_services")[0][0] == 4
+
+    def test_round_trip(self, alembic_cfg):
+        command.upgrade(alembic_cfg, "010")
+        command.downgrade(alembic_cfg, "009")
+        assert sql("SELECT count(*) FROM permissions p JOIN applications a ON a.id = p.application_id "
+                   "WHERE a.slug = 'hub'")[0][0] == 5
+        command.upgrade(alembic_cfg, "010")
+        assert sql("SELECT count(*) FROM hub_services")[0][0] == 5
