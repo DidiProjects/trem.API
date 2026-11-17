@@ -27,6 +27,8 @@ FOLDERS = [
     ("Admin: users", lambda p: p.startswith("/admin/users")),
     ("Admin: applications and permissions", lambda p: p.startswith("/admin/applications")),
     ("Admin: API clients", lambda p: p.startswith("/admin/clients")),
+    ("Hub catalog", lambda p: p.startswith("/hub/")),
+    ("Admin: hub catalog", lambda p: p.startswith("/admin/hub/")),
     ("Users (legacy admin)", lambda p: p.startswith("/users")),
     ("PDF", lambda p: p.startswith("/pdf/")),
     ("Image", lambda p: p.startswith("/image/")),
@@ -40,7 +42,7 @@ FOLDERS = [
 PUBLIC = {
     "/health", "/.well-known/jwks.json", "/auth/login", "/auth/mfa/verify", "/auth/refresh",
     "/auth/logout", "/auth/register", "/auth/verify-email", "/auth/resend-verification",
-    "/auth/forgot-password", "/auth/reset-password",
+    "/auth/forgot-password", "/auth/reset-password", "/hub/services/{slug}/logo",
 }
 
 # Field values that come from the environment or from an earlier response.

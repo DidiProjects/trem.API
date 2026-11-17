@@ -15,6 +15,7 @@ from app.api.middleware.body_size_limit import BodySizeLimitMiddleware
 from app.api.v1.routers import admin as admin_router
 from app.api.v1.routers import api_clients as api_clients_router
 from app.api.v1.routers import auth as auth_router
+from app.api.v1.routers import hub as hub_router
 from app.api.v1.routers import me as me_router
 from app.api.v1.routers import signup as signup_router
 from app.api.v1.routers import users as users_router
@@ -121,6 +122,8 @@ app.include_router(auth_router.router)
 app.include_router(auth_router.well_known_router)
 app.include_router(signup_router.router)
 app.include_router(me_router.router)
+app.include_router(hub_router.router)
+app.include_router(hub_router.admin_router)
 app.include_router(users_router.router)
 app.include_router(api_clients_router.router)
 app.include_router(admin_router.router)
