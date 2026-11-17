@@ -375,10 +375,16 @@ Troca de chave sem derrubar ninguém: a chave antiga vai para `JWT_EXTRA_PUBLIC_
 ### Sessão do navegador
 
 Com `"session": "cookie"` no login, o refresh vai num cookie `trem_refresh`
-`HttpOnly; Secure; SameSite=Strict; Path=/auth`, fora do alcance do JavaScript, e
-o access token fica só em memória. `/auth/refresh` e `/auth/logout` sem corpo leem
-o cookie e exigem o header `X-Requested-With: trem`: um formulário de outro site
-não envia header próprio, e um `fetch` de outra origem que envie é barrado no preflight.
+`HttpOnly; Secure; SameSite=None; Partitioned; Path=/auth`, fora do alcance do
+JavaScript, e o access token fica só em memória. Os fronts ficam em outros domínios e
+chamam a API direto: o cookie precisa viajar entre sites, e `Partitioned` (CHIPS) o
+guarda separado por site do front, aceito pelo Chrome e pelo Firefox mesmo onde
+bloqueiam cookie de terceiro. `/auth/refresh` e `/auth/logout` sem corpo leem o cookie
+e exigem o header `X-Requested-With: trem`: um formulário de outro site não envia header
+próprio, e um `fetch` que envie passa por preflight, que o CORS só aprova para
+`CORS_ORIGINS`. Ao gravar o cookie, a API expira o antigo `SameSite=Strict` sem
+partição: enviado junto, o token já rotacionado contaria como reuso. Em HTTP local
+(`COOKIE_SECURE=false`) o cookie segue `SameSite=Strict`, sem partição.
 
 Sem `session`, o refresh volta no corpo (aplicações, scripts, outros fronts).
 

@@ -164,6 +164,7 @@ jobs:
             -e API_PORT="${{ vars.API_PORT }}" \
             -e API_URL="${{ vars.API_URL }}" \
             -e FRONTEND_URL="${{ vars.FRONTEND_URL }}" \
+            -e CORS_ORIGINS="${{ vars.CORS_ORIGINS }}" \
             -e API_KEY="${{ secrets.API_KEY }}" \
             -e UPLOAD_DIR=/tmp/uploads \
             -e MAX_FILE_SIZE=52428800 \

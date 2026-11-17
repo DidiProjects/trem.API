@@ -89,7 +89,8 @@ app/
 - Per-client API keys (`X-API-Key: trem_...`), 256-bit, stored as SHA-256
 - User login with Argon2id passwords and RS256 access tokens (15 min) per application
 - Opaque refresh tokens (7 days), rotated on every use; reuse of a rotated token ends the login
-- Browser sessions keep the refresh token in an `HttpOnly; Secure; SameSite=Strict` cookie
+- Browser sessions keep the refresh token in an `HttpOnly; Secure; SameSite=None; Partitioned`
+  cookie, so fronts on other domains (`CORS_ORIGINS`) call the API directly
 - Login throttling per username and per IP, with the same answer for unknown users
 - Public keys at `/.well-known/jwks.json` so other applications verify tokens locally
 
@@ -196,6 +197,12 @@ POST /auth/reset-password       {"token", "new_password"}            (from the e
 The e-mail links (confirm sign-up, reset password, log in) open at `FRONTEND_URL`, or at
 `API_URL` when it is empty. The front must handle `#verify-email=` and `#reset-password=`
 fragments on its root.
+
+Browser fronts on other domains call the API directly: list their origins in
+`CORS_ORIGINS` (comma separated, e.g. `https://meus-trem.netlify.app,http://localhost:3004`).
+They send `credentials: "include"` on `/auth/*` for the session cookie, which is
+partitioned per front site (CHIPS). Plain-HTTP development (`COOKIE_SECURE=false`) keeps a
+`SameSite=Strict` cookie: front and API on `localhost` are the same site.
 
 Second factor (TOTP):
 ```
