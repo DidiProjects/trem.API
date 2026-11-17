@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     API_URL: str = "http://localhost:3002"
     # Where the e-mail links (confirm sign-up, reset password, log in) open; defaults to API_URL.
     FRONTEND_URL: str = ""
+    # Origins of the browser fronts that call this API directly, comma separated
+    # (e.g. "https://meus-trem.netlify.app,http://localhost:3004"). Empty: no CORS at all.
+    CORS_ORIGINS: str = ""
 
     # JWT RS256 — gere com scripts/generate_keys.py
     # Armazene as chaves PEM com \n literal no .env
@@ -124,6 +127,9 @@ class Settings(BaseSettings):
 
     def frontend_url(self) -> str:
         return (self.FRONTEND_URL or self.API_URL).rstrip("/")
+
+    def cors_origins(self) -> list[str]:
+        return [origin.strip().rstrip("/") for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
 
 
 @lru_cache()

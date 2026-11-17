@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -101,6 +102,18 @@ app.add_middleware(
         "/scrapers": get_settings().SCRAPER_MAX_REQUEST_SIZE,
     },
 )
+# Added last, so it wraps the others: their error responses (413 and the like) carry the
+# CORS headers too, or the browser hides them from the front as a network error.
+if get_settings().cors_origins():
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=get_settings().cors_origins(),
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+        allow_headers=["Authorization", "Content-Type", "X-Requested-With"],
+        expose_headers=["Retry-After"],
+        max_age=600,
+    )
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 # --- Routers v1: autenticação e gestão de usuários ---
