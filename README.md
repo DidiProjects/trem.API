@@ -604,8 +604,10 @@ without owner gets `403`). Jobs belong to that user, not to the key. The **Scrap
 | GET, DELETE | `/scrapers/linkedin/session/login/{id}` | `starting`, `waiting`, `connected`, `failed`, `expired`, `cancelled`; cancel |
 
 **Connect LinkedIn** (the tab, or `POST .../session/login`) opens a private Chromium on the
-LinkedIn login on the server and returns a `url`, valid once for 2 minutes. Opening it trades
-the token for a cookie scoped to that login, and shows the browser through noVNC: the page and
+LinkedIn login on the server and returns a `url` (a path on this API: a front on another domain
+resolves it against the API's address), valid once for 2 minutes. Opening it trades the token
+for a `SameSite=Strict` cookie scoped to that login, then a page of the API moves on to noVNC by
+itself (a 303 would keep the opener's site and drop the cookie): the page and
 its WebSocket go browser → trem-api → orchestrator. The person types their password and 2FA on
 LinkedIn's page; nothing in between reads or stores it. Once the feed shows up the session is
 saved and the jobs start. A login lasts at most 10 minutes. Behind nginx, `/scrapers/linkedin/login/`

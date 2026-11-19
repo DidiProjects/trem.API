@@ -3,6 +3,8 @@ Remote LinkedIn login through trem-api: one-time token to cookie, the viewer fil
 WebSocket relay, with the orchestrator replaced by httpx.MockTransport and a websockets server.
 """
 import asyncio
+import html
+import re
 import threading
 from unittest.mock import patch
 
@@ -165,8 +167,14 @@ def _start(api) -> str:
 
 def _open(browser, url) -> httpx.Response:
     response = browser.get(url)
-    assert response.status_code == 303
+    assert response.status_code == 200
     return response
+
+
+def _refresh_target(response) -> str:
+    match = re.search(r"http-equiv='refresh' content='0;url=([^']+)'", response.text)
+    assert match, response.text
+    return html.unescape(match.group(1))
 
 
 class TestStartLogin:
@@ -194,13 +202,19 @@ class TestStartLogin:
 class TestViewer:
     def test_token_becomes_a_cookie_scoped_to_the_login(self, api, browser):
         response = _open(browser, _start(api))
-        location = response.headers["location"]
+        assert "location" not in response.headers  # a page, not a redirect: see open_viewer
+        location = _refresh_target(response)
         assert location.startswith(f"{PREFIX}/login/{LOGIN}/files/vnc.html?")
-        assert f"path=scrapers/linkedin/login/{LOGIN}/websockify" in location
+        assert f"path=scrapers/linkedin/login/{LOGIN}/websockify&autoconnect=true" in location
         cookie = response.headers["set-cookie"].lower()
         assert "scr_login=" in cookie and "httponly" in cookie and "samesite=strict" in cookie
         assert f"path={PREFIX}/login/{LOGIN}/" in cookie
         assert response.headers["referrer-policy"] == "no-referrer"
+
+    def test_the_page_opens_the_viewer_with_the_cookie(self, api, browser, orchestrator):
+        target = _refresh_target(_open(browser, _start(api)))
+        response = browser.get(target)
+        assert (response.status_code, response.text) == (200, "<html>novnc</html>")
 
     def test_token_works_once(self, api, browser):
         url = _start(api)
