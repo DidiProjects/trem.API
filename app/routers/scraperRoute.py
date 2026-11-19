@@ -1,3 +1,4 @@
+import html
 import json
 import logging
 import re
@@ -5,7 +6,7 @@ from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Path, Query, Request, UploadFile, WebSocket
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from app.api.v1.dependencies import require_permission
 from app.domain.entities.permission import TremPermission
@@ -195,8 +196,19 @@ async def open_viewer(
     if cookie is None:
         return _denied("This link was already used or has expired. Start the login again from the Scrapers tab.")
     ws_path = f"{_viewer_path(login_id)}websockify".lstrip("/")
-    viewer = f"{_viewer_path(login_id)}files/vnc.html?path={ws_path}&autoconnect=true&resize=remote&reconnect=true"
-    response = RedirectResponse(viewer, status_code=303, headers=_VIEWER_HEADERS)
+    viewer = html.escape(
+        f"{_viewer_path(login_id)}files/vnc.html?path={ws_path}&autoconnect=true&resize=remote&reconnect=true"
+    )
+    # A page that moves on by itself, not a 303: a front on another site opens this tab, and
+    # a browser keeps that cross-site origin through redirects, so the SameSite=Strict cookie
+    # set here would not ride on the redirected request. The refresh starts from this page,
+    # same site, and the cookie goes along.
+    body = (
+        f"<!doctype html><meta charset='utf-8'><meta http-equiv='refresh' content='0;url={viewer}'>"
+        f"<title>LinkedIn login</title>"
+        f"<p style='font-family:sans-serif'>Opening the LinkedIn login… <a href='{viewer}'>Continue</a></p>"
+    )
+    response = HTMLResponse(body, headers=_VIEWER_HEADERS)
     response.set_cookie(
         VIEWER_COOKIE, cookie, max_age=VIEWER_TTL_SECONDS, path=_viewer_path(login_id),
         httponly=True, samesite="strict", secure=get_settings().API_URL.startswith("https://"),
