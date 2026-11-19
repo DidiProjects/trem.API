@@ -6,7 +6,7 @@ from typing import Any, Awaitable, Callable
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.core.exceptions import InvalidEmailTokenError, SignupDisabledError
+from app.core.exceptions import InvalidEmailTokenError, SignupDisabledError, UserAlreadyExistsError
 from app.core.security import generate_refresh_token, hash_password, hash_token
 from app.domain.entities.permission import TremPermission
 from app.domain.entities.user import User, UserStatus
@@ -28,6 +28,12 @@ def get_signup_limiter() -> SlidingWindowLimiter:
     return SlidingWindowLimiter(settings.SIGNUP_MAX_PER_IP, settings.SIGNUP_WINDOW_SECONDS)
 
 
+@lru_cache()
+def get_username_check_limiter() -> SlidingWindowLimiter:
+    settings = get_settings()
+    return SlidingWindowLimiter(settings.USERNAME_CHECK_MAX_PER_IP, settings.USERNAME_CHECK_WINDOW_SECONDS)
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -45,10 +51,23 @@ class SignupService:
         self._limiter = limiter or get_signup_limiter()
         self.outbox: Outbox = []
 
+    async def username_available(self, username: str, ip: str) -> bool:
+        """
+        Usernames are shown to other people, so whether one is taken is not hidden: the
+        form says so as it is typed instead of a round trip through the inbox. E-mails
+        stay unanswerable. Read only; an abandoned sign-up counts as free, as in register.
+        """
+        if not get_settings().SIGNUP_ENABLED:
+            raise SignupDisabledError()
+        get_username_check_limiter().hit(f"username:{ip}")
+        user = await self._users.get_by_username(username)
+        return user is None or self._is_stale(user)
+
     async def register(self, username: str, email: str, password: str, ip: str) -> None:
         """
-        Same answer whatever happens. A taken e-mail or username is told only to the
-        owner of the e-mail typed in, never to whoever is calling the API.
+        A taken username is a 409, which the form already announced while it was typed.
+        A taken e-mail gets the same answer as a new one and is told only to the owner
+        of that address, never to whoever is calling the API.
         """
         settings = get_settings()
         if not settings.SIGNUP_ENABLED:
@@ -60,12 +79,10 @@ class SignupService:
         # Hashed before looking anything up, so both paths cost the same Argon2id time.
         password_hash = hash_password(password)
 
-        by_email = await self._free_if_stale(await self._users.get_by_email(email))
-        if by_email:
-            self._queue(self._email.send_signup_conflict, to=email, reason="email", login_url=settings.frontend_url())
-            return
         if await self._free_if_stale(await self._users.get_by_username(username)):
-            self._queue(self._email.send_signup_conflict, to=email, reason="username", login_url=settings.frontend_url())
+            raise UserAlreadyExistsError()
+        if await self._free_if_stale(await self._users.get_by_email(email)):
+            self._queue(self._email.send_signup_conflict, to=email, login_url=settings.frontend_url())
             return
 
         user = await self._users.create(
@@ -126,13 +143,17 @@ class SignupService:
         An address nobody confirmed in time does not keep a username or an e-mail hostage:
         the abandoned account is dropped and the name can be taken again.
         """
-        if user is None or user.status != UserStatus.PENDING_VERIFICATION:
-            return user
-        ttl = timedelta(hours=get_settings().EMAIL_TOKEN_TTL_HOURS)
-        if _aware(user.created_at) + ttl < _utcnow():
+        if user is not None and self._is_stale(user):
             await self._users.delete(user.id)
             return None
         return user
+
+    @staticmethod
+    def _is_stale(user: User) -> bool:
+        if user.status != UserStatus.PENDING_VERIFICATION:
+            return False
+        ttl = timedelta(hours=get_settings().EMAIL_TOKEN_TTL_HOURS)
+        return _aware(user.created_at) + ttl < _utcnow()
 
     async def _notify_admins(self, user: User) -> None:
         settings = get_settings()

@@ -446,16 +446,22 @@ sobrescreve; o primeiro item do `X-Forwarded-For` é escolhido pelo cliente.
 3. Admin aprova e define as permissões (API de admin)
 ```
 
-- **Sem enumeração**: e-mail ou username já usados recebem a mesma resposta 202. Quem
-  fica sabendo é só o dono do e-mail digitado, por e-mail. A senha é hasheada antes de
-  qualquer consulta, e os e-mails saem numa background task depois da resposta, então
+- **Username é público, e-mail não**: o formulário confere o nome enquanto ele é
+  digitado (`GET /auth/username-available?username=`, sem login, `{available}`), e o
+  cadastro com nome já usado dá 409. Um nome aparece para outras pessoas e o login já
+  limita tentativas por nome; esconder custava um cadastro inteiro de ida e volta pela
+  caixa de entrada. O e-mail continua sem enumeração: já usado recebe a mesma resposta
+  202, e quem fica sabendo é só o dono do endereço, por e-mail. A senha é hasheada antes
+  de qualquer consulta, e os e-mails saem numa background task depois da resposta, então
   o tempo também não muda.
 - **Token no fragmento** (`#`): não vai para log do nginx nem para o `Referer`.
 - **Cadastro abandonado** (não confirmado em `EMAIL_TOKEN_TTL_HOURS`) não segura o
   username nem o e-mail: um novo cadastro apaga a conta pendente.
 - **Reenvio**: `POST /auth/resend-verification {email}` invalida os links anteriores.
 - **Limites**: `SIGNUP_MAX_PER_IP` (5) cadastros por IP por `SIGNUP_WINDOW_SECONDS` (1 h);
-  o reenvio conta por IP e por e-mail. `SIGNUP_ENABLED=false` fecha o cadastro.
+  o reenvio conta por IP e por e-mail; a conferência do username,
+  `USERNAME_CHECK_MAX_PER_IP` (60) por `USERNAME_CHECK_WINDOW_SECONDS` (5 min).
+  `SIGNUP_ENABLED=false` fecha o cadastro.
 - **Login** de conta pendente diz o motivo (e-mail não confirmado, aguardando
   aprovação) só depois da senha certa.
 - **Senha**: mínimo 12, máximo 128, sem regra de composição (NIST SP 800-63B); não pode
