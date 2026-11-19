@@ -697,7 +697,11 @@ fala com `http://trem-llm:8080` usando `LLM_API_KEY`; nada do chamador é repass
   daquele usuário, num display próprio, transmitido por x11vnc + websockify presos ao
   localhost do container. A trem-api devolve uma URL com token de uso único (2 min,
   `app/services/scraperLoginService.py`); abrir a URL troca o token por um cookie aleatório
-  `HttpOnly`, `SameSite=Strict`, com path restrito àquele login, e redireciona ao noVNC. Os
+  `HttpOnly`, `SameSite=Strict`, com path restrito àquele login, e responde uma página que
+  segue sozinha (`meta refresh`) para o noVNC. Não é um 303 porque a aba costuma ser aberta
+  por um front em outro site: o navegador mantém essa origem entre sites ao longo do
+  redirecionamento e não manda o cookie `Strict` recém-gravado. A partir da página da API, o
+  pedido é do mesmo site e o cookie vai. Os
   arquivos do noVNC e o WebSocket (`/scrapers/linkedin/login/{id}/...`) só aceitam esse
   cookie; o WebSocket exige também `Origin` igual ao host. Só digests de token e cookie ficam
   em memória (processo único).
