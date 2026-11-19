@@ -1,4 +1,4 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.routers.auth import http_error
@@ -9,8 +9,10 @@ from app.domain.schemas.auth import (
     RegisterRequest,
     ResendVerificationRequest,
     ResetPasswordRequest,
+    UsernameAvailability,
 )
 from app.domain.schemas.common import MessageResponse
+from app.domain.schemas.user import USERNAME_PATTERN
 from app.infrastructure.database.connection import get_db
 from app.infrastructure.email.smtp_client import SmtpEmailClient
 from app.services.password_reset_service import PasswordResetService
@@ -27,6 +29,20 @@ _ACCEPTED = (
 
 def get_email_client():
     return SmtpEmailClient()
+
+
+@router.get("/username-available", response_model=UsernameAvailability)
+async def username_available(
+    request: Request,
+    username: str = Query(min_length=3, max_length=50, pattern=USERNAME_PATTERN),
+    db: AsyncSession = Depends(get_db, scope="function"),
+):
+    service = SignupService(db, email_client=None)
+    try:
+        available = await service.username_available(username, client_ip(request))
+    except AppException as e:
+        raise http_error(e)
+    return UsernameAvailability(available=available)
 
 
 @router.post("/register", response_model=MessageResponse, status_code=status.HTTP_202_ACCEPTED)

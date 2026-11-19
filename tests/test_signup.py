@@ -63,8 +63,11 @@ def http(db_session, seeded_permissions, email, monkeypatch):
     app.dependency_overrides[get_db] = _db
     app.dependency_overrides[get_email_client] = lambda: email
     limiter = SlidingWindowLimiter(limit=3, window_seconds=3600)
+    checks = SlidingWindowLimiter(limit=5, window_seconds=300)
     throttle = LoginThrottle(per_username=50, per_ip=50, window_seconds=60)
     with patch("app.services.signup_service.get_signup_limiter", return_value=limiter), patch(
+        "app.services.signup_service.get_username_check_limiter", return_value=checks
+    ), patch(
         "app.services.auth_service.get_login_throttle", return_value=throttle
     ):
         yield TestClient(app, base_url="https://testserver")
@@ -81,6 +84,46 @@ def _register(http, username="joana", mail="joana@example.com", password=PASSWOR
 
 async def _user(db_session, username):
     return (await db_session.execute(select(UserModel).where(UserModel.username == username))).scalar_one_or_none()
+
+
+def _check(http, username, ip="198.51.100.1"):
+    return http.get("/auth/username-available", params={"username": username}, headers={"CF-Connecting-IP": ip})
+
+
+class TestUsernameAvailable:
+    def test_free_name(self, http):
+        response = _check(http, "joana")
+        assert response.status_code == 200
+        assert response.json() == {"available": True}
+
+    def test_taken_name(self, http):
+        _register(http)
+        assert _check(http, "joana").json() == {"available": False}
+
+    async def test_abandoned_sign_up_is_free_and_kept(self, http, db_session):
+        _register(http)
+        await db_session.execute(
+            update(UserModel).values(created_at=datetime.now(timezone.utc) - timedelta(days=2))
+        )
+        await db_session.commit()
+        assert _check(http, "joana").json() == {"available": True}
+        assert await _user(db_session, "joana") is not None  # a GET deletes nothing
+
+    @pytest.mark.parametrize("username", ["jo", "jo ana", "x" * 51])
+    def test_invalid_name_is_422(self, http, username):
+        assert _check(http, username).status_code == 422
+
+    def test_is_rate_limited_per_ip(self, http):
+        for _ in range(5):
+            assert _check(http, "joana").status_code == 200
+        response = _check(http, "joana")
+        assert response.status_code == 429
+        assert int(response.headers["Retry-After"]) > 0
+        assert _check(http, "joana", ip="203.0.113.5").status_code == 200
+
+    def test_disabled_sign_up_is_403(self, http, monkeypatch):
+        monkeypatch.setattr(get_settings(), "SIGNUP_ENABLED", False)
+        assert _check(http, "joana").status_code == 403
 
 
 class TestRegister:
@@ -116,17 +159,20 @@ class TestRegister:
         second = _register(http, username="outra")
         assert second.status_code == first.status_code == 202
         assert second.json() == first.json()
-        assert email.of("send_signup_conflict") == [
-            {"to": "joana@example.com", "reason": "email", "login_url": "http://testserver"}
-        ]
+        assert email.of("send_signup_conflict") == [{"to": "joana@example.com", "login_url": "http://testserver"}]
 
-    async def test_taken_username_is_told_to_the_new_address_only(self, http, db_session, email):
+    async def test_taken_username_is_409_and_sends_nothing(self, http, db_session, email):
         _register(http)
         response = _register(http, mail="intrusa@example.com")
-        assert response.status_code == 202
-        (conflict,) = email.of("send_signup_conflict")
-        assert conflict["to"] == "intrusa@example.com" and conflict["reason"] == "username"
+        assert response.status_code == 409
+        assert email.of("send_signup_conflict") == []
+        assert len(email.of("send_email_verification")) == 1
         assert (await _user(db_session, "joana")).email == "joana@example.com"
+
+    def test_taken_username_wins_over_taken_email(self, http, email):
+        _register(http)
+        assert _register(http).status_code == 409
+        assert email.of("send_signup_conflict") == []
 
     async def test_abandoned_sign_up_frees_the_username(self, http, db_session):
         _register(http)

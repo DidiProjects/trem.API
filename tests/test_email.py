@@ -285,12 +285,9 @@ class TestSmtpEmailClientSignup:
         body = _body(smtp_server)
         assert "https://x/#verify-email=abc" in body and "24 horas" in body
 
-    @pytest.mark.parametrize("reason,fragment", [("email", "Já existe uma conta"), ("username", "nome de usuário")])
-    async def test_conflict_explains_only_to_the_address_owner(
-        self, smtp_server, configured_settings, reason, fragment
-    ):
-        await SmtpEmailClient().send_signup_conflict(to="dono@example.com", reason=reason, login_url="https://x")
-        assert fragment in _body(smtp_server)
+    async def test_conflict_explains_only_to_the_address_owner(self, smtp_server, configured_settings):
+        await SmtpEmailClient().send_signup_conflict(to="dono@example.com", login_url="https://x")
+        assert "Já existe uma conta" in _body(smtp_server)
 
     async def test_admin_notice_names_the_account(self, smtp_server, configured_settings):
         await SmtpEmailClient().send_signup_pending_approval(
@@ -308,5 +305,5 @@ class TestSmtpEmailClientSignup:
         loop_thread = threading.get_ident()
         seen = []
         smtp_server.send_message.side_effect = lambda msg: seen.append(threading.get_ident())
-        await SmtpEmailClient().send_signup_conflict(to="a@example.com", reason="email", login_url="x")
+        await SmtpEmailClient().send_signup_conflict(to="a@example.com", login_url="x")
         assert seen and seen[0] != loop_thread

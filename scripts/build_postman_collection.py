@@ -19,7 +19,7 @@ FOLDERS = [
     ("Health", lambda p: p == "/health"),
     ("Auth", lambda p: p in {"/auth/login", "/auth/mfa/verify", "/auth/refresh", "/auth/logout",
                              "/auth/change-password", "/.well-known/jwks.json"}),
-    ("Sign-up and password reset", lambda p: p in {"/auth/register", "/auth/verify-email",
+    ("Sign-up and password reset", lambda p: p in {"/auth/username-available", "/auth/register", "/auth/verify-email",
                                                    "/auth/resend-verification", "/auth/forgot-password",
                                                    "/auth/reset-password"}),
     ("Two-factor (TOTP)", lambda p: p.startswith("/auth/mfa/")),
@@ -41,7 +41,7 @@ FOLDERS = [
 
 PUBLIC = {
     "/health", "/.well-known/jwks.json", "/auth/login", "/auth/mfa/verify", "/auth/refresh",
-    "/auth/logout", "/auth/register", "/auth/verify-email", "/auth/resend-verification",
+    "/auth/logout", "/auth/username-available", "/auth/register", "/auth/verify-email", "/auth/resend-verification",
     "/auth/forgot-password", "/auth/reset-password", "/hub/services/{slug}/logo",
 }
 
