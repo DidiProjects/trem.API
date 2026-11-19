@@ -349,6 +349,33 @@
       "name": "Sign-up and password reset",
       "item": [
         {
+          "name": "GET /auth/username-available",
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "noauth"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/username-available?username=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "username-available"
+              ],
+              "query": [
+                {
+                  "key": "username",
+                  "value": "",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "Username Available"
+          }
+        },
+        {
           "name": "POST /auth/register",
           "request": {
             "method": "POST",

@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     EMAIL_TOKEN_TTL_HOURS: int = 24
     SIGNUP_MAX_PER_IP: int = 5
     SIGNUP_WINDOW_SECONDS: int = 3600
+    # The sign-up form checks the username as it is typed (debounced in the front).
+    USERNAME_CHECK_MAX_PER_IP: int = 60
+    USERNAME_CHECK_WINDOW_SECONDS: int = 300
     # A reset link is a password in transit: short-lived, single use, replaced by the next one.
     PASSWORD_RESET_TTL_MINUTES: int = 60
 

@@ -122,6 +122,10 @@ class RegisterRequest(BaseModel):
         return check_password(v, info.data.get("username"), info.data.get("email"))
 
 
+class UsernameAvailability(BaseModel):
+    available: bool
+
+
 class EmailTokenRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 

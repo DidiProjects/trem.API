@@ -98,15 +98,11 @@ Se não foi você, ignore esta mensagem: sem a confirmação, nenhuma conta é a
 """
         await self._send(to=to, subject="[trem.API] Confirme seu e-mail", body=body)
 
-    async def send_signup_conflict(self, to: str, reason: str, login_url: str) -> None:
-        """Answers a sign-up that hit an existing account, without telling the requester anything."""
-        lines = {
-            "email": "Já existe uma conta com este e-mail. Se esqueceu a senha, use \"Esqueci a senha\" na tela de login.",
-            "username": "O nome de usuário escolhido já está em uso. Faça o cadastro de novo com outro nome.",
-        }
+    async def send_signup_conflict(self, to: str, login_url: str) -> None:
+        """Answers a sign-up with an e-mail that already has an account, without telling the requester."""
         body = f"""Recebemos um pedido de cadastro no trem.API com este e-mail.
 
-{lines[reason]}
+Já existe uma conta com este e-mail. Se esqueceu a senha, use "Esqueci a senha" na tela de login.
 
 Entrar: {login_url}
 

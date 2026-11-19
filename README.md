@@ -187,7 +187,8 @@ POST /auth/logout           {"refresh_token"}  or the session cookie + X-Request
 POST /auth/change-password  {"current_password", "new_password"}  (Bearer)
 GET  /.well-known/jwks.json
 
-POST /auth/register             {"username", "email", "password"}   → 202
+GET  /auth/username-available?username=                              → {"available"}
+POST /auth/register             {"username", "email", "password"}   → 202, 409 if the username is taken
 POST /auth/verify-email         {"token"}                            (from the e-mail link)
 POST /auth/resend-verification  {"email"}                            → 202
 POST /auth/forgot-password      {"email"}                            → 202
@@ -266,8 +267,10 @@ from the database on each visit, and `hub:*` never travels in a `trem` token. Th
 comes from the bytes, not the declared Content-Type; SVGs are served with a sandboxing CSP.
 
 Sign-up: the account waits for e-mail confirmation, then for an admin to approve it and
-grant permissions. `register`, `resend-verification` and `forgot-password` answer the same
-whether or not the e-mail or username exists. A reset link lasts 60 minutes, works once, ends
+grant permissions. Usernames are public: the form checks one as it is typed
+(`username-available`, 60 per IP per 5 minutes) and `register` answers 409 for a taken one.
+E-mails are not: `register`, `resend-verification` and `forgot-password` answer the same
+whether or not the e-mail exists. A reset link lasts 60 minutes, works once, ends
 every session, and leaves TOTP on. New passwords found in known breaches (Have I Been Pwned,
 k-anonymity: only 5 characters of the SHA-1 leave the server) are refused with 422; if the
 service does not answer, the password is accepted. Passwords: 12 to 128 characters, no composition rules, must not
