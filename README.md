@@ -260,6 +260,10 @@ DELETE /admin/hub/services/{slug}         with its permission and grants
 PUT    /admin/hub/services/{slug}/logo    multipart "file": PNG, WebP or SVG, up to 256 KB
 DELETE /admin/hub/services/{slug}/logo
 PUT    /admin/hub/services/{slug}/users/{id}   grant;  DELETE: revoke
+GET    /admin/hub/services/{slug}/oidc        the service's OIDC client (404 without one)
+PUT    /admin/hub/services/{slug}/oidc        {"redirect_uris": [...]}: creates it (201, secret shown once) or replaces the URIs
+POST   /admin/hub/services/{slug}/oidc/secret new secret, shown once; the old one stops at once
+DELETE /admin/hub/services/{slug}/oidc
 ```
 
 Granting or revoking a service does not end the account's sessions: the catalog is read
