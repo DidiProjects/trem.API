@@ -15,9 +15,11 @@ from app.domain.schemas.hub import (
     HubServiceResponse,
     HubServiceUpdate,
 )
+from app.domain.schemas.oidc import OidcClientConfig, OidcClientResponse, OidcClientSecretResponse
 from app.infrastructure.database.connection import get_db
-from app.infrastructure.database.models import HubServiceModel
+from app.infrastructure.database.models import HubServiceModel, OidcClientModel
 from app.services.hub_service import LOGO_MAX_BYTES, HubService, logo_path, permission_key
+from app.services.oidc_client_service import OidcClientService
 
 router = APIRouter(prefix="/hub", tags=["Hub"])
 admin_router = APIRouter(prefix="/admin/hub", tags=["Admin"])
@@ -50,6 +52,17 @@ def _admin_view(service: HubServiceModel) -> HubServiceAdminResponse:
         logo_url=logo_path(service),
         created_at=service.created_at,
         updated_at=service.updated_at,
+    )
+
+
+def _client_view(client: OidcClientModel, secret: Optional[str] = None) -> OidcClientSecretResponse:
+    return OidcClientSecretResponse(
+        client_id=client.client_id,
+        redirect_uris=client.redirect_uris,
+        secret_created_at=client.secret_created_at,
+        created_at=client.created_at,
+        updated_at=client.updated_at,
+        client_secret=secret,
     )
 
 
@@ -142,3 +155,37 @@ async def revoke_service(
 ):
     await _run(HubService(db).revoke(slug, user_id))
     return MessageResponse(message="Acesso removido")
+
+
+@admin_router.get("/services/{slug}/oidc", response_model=OidcClientResponse)
+async def get_oidc_client(slug: str, _: User = Depends(require_admin), db: AsyncSession = Depends(get_db, scope="function")):
+    """The service's login through trem.API; 404 while it has none."""
+    return _client_view(await _run(OidcClientService(db).get(slug)))
+
+
+@admin_router.put("/services/{slug}/oidc", response_model=OidcClientSecretResponse, response_model_exclude_none=True)
+async def configure_oidc_client(
+    slug: str,
+    body: OidcClientConfig,
+    response: Response,
+    _: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db, scope="function"),
+):
+    """Creates the client (201, with the secret, shown only this once) or replaces its redirect URIs (200)."""
+    client, secret = await _run(OidcClientService(db).configure(slug, body.redirect_uris))
+    if secret:
+        response.status_code = status.HTTP_201_CREATED
+    return _client_view(client, secret)
+
+
+@admin_router.post("/services/{slug}/oidc/secret", response_model=OidcClientSecretResponse)
+async def rotate_oidc_secret(slug: str, _: User = Depends(require_admin), db: AsyncSession = Depends(get_db, scope="function")):
+    """A new secret, shown only this once; the old one stops working at once."""
+    client, secret = await _run(OidcClientService(db).rotate_secret(slug))
+    return _client_view(client, secret)
+
+
+@admin_router.delete("/services/{slug}/oidc", response_model=MessageResponse)
+async def delete_oidc_client(slug: str, _: User = Depends(require_admin), db: AsyncSession = Depends(get_db, scope="function")):
+    await _run(OidcClientService(db).delete(slug))
+    return MessageResponse(message="Login único removido")

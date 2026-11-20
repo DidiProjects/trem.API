@@ -392,6 +392,23 @@ class TestAppOnMigratedSchema:
         assert user_permissions(uid) == {"hub:immich", "hub:jellyfin", "hub:radarr"}
         assert sql("SELECT logo_type FROM hub_services WHERE name = 'Jellyfin'")[0][0] == "image/png"
 
+    def test_oidc_clients_on_postgres(self, alembic_cfg):
+        from app.services.oidc_client_service import OidcClientService, hash_secret, secret_matches
+
+        command.upgrade(alembic_cfg, "head")
+        uri = "http://100.64.0.1:8096/sso/OID/redirect/trem"
+
+        async def scenario(session):
+            clients = OidcClientService(session)
+            _, secret = await clients.configure("immich", [uri])
+            await clients.configure("immich", [uri, "https://fotos.example/cb"])
+            client = await clients.get("immich")
+            return secret, client.client_id, client.redirect_uris, secret_matches(client, secret)
+
+        secret, client_id, uris, matches = self.run(scenario)
+        assert client_id == "immich" and uris == [uri, "https://fotos.example/cb"] and matches
+        assert sql("SELECT secret_hash FROM oidc_clients")[0][0] == hash_secret(secret)
+
     def test_login_refresh_and_reuse_on_postgres(self, alembic_cfg):
         """The atomic claim is an UPDATE ... WHERE revoked = false: its rowcount matters on PG."""
         from app.core.exceptions import InvalidCredentialsError
@@ -699,3 +716,33 @@ class TestUpgrade010:
                    "WHERE a.slug = 'hub'")[0][0] == 5
         command.upgrade(alembic_cfg, "010")
         assert sql("SELECT count(*) FROM hub_services")[0][0] == 5
+
+
+class TestUpgrade011:
+    def test_removing_the_service_removes_its_client(self, alembic_cfg):
+        command.upgrade(alembic_cfg, "011")
+        sql("""
+            INSERT INTO oidc_clients (hub_service_id, secret_hash, redirect_uris)
+            SELECT s.id, repeat('a', 64), '["https://tv.example/cb"]'
+            FROM hub_services s JOIN permissions p ON p.id = s.permission_id WHERE p.name = 'immich'
+        """)
+        sql("DELETE FROM hub_services WHERE permission_id = (SELECT id FROM permissions WHERE name = 'immich')")
+        assert sql("SELECT count(*) FROM oidc_clients")[0][0] == 0
+
+    def test_one_client_per_service(self, alembic_cfg):
+        command.upgrade(alembic_cfg, "011")
+        insert = """
+            INSERT INTO oidc_clients (hub_service_id, secret_hash, redirect_uris)
+            SELECT s.id, repeat('a', 64), '[]'
+            FROM hub_services s JOIN permissions p ON p.id = s.permission_id WHERE p.name = 'immich'
+        """
+        sql(insert)
+        with pytest.raises(IntegrityError):
+            sql(insert)
+
+    def test_round_trip(self, alembic_cfg):
+        command.upgrade(alembic_cfg, "011")
+        command.downgrade(alembic_cfg, "010")
+        assert sql("SELECT to_regclass('oidc_clients')")[0][0] is None
+        command.upgrade(alembic_cfg, "011")
+        assert sql("SELECT count(*) FROM oidc_clients")[0][0] == 0
