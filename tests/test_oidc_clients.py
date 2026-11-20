@@ -80,6 +80,19 @@ class TestConfigure:
         admin, _, _ = ctx
         assert _configure(admin, (uri,)).status_code == 422
 
+    @pytest.mark.parametrize("uri", [
+        "http://localhost:8096/cb", "http://127.0.0.1:5055/login", "http://192.168.1.20:8096/cb",
+        "http://10.0.0.5/cb", "http://100.116.16.24:8096/cb", "https://flix.example.com/cb",
+    ])
+    async def test_http_only_where_the_code_stays_off_the_internet(self, ctx, uri):
+        admin, _, _ = ctx
+        assert _configure(admin, (uri,)).status_code == 201
+
+    @pytest.mark.parametrize("uri", ["http://flix.example.com/cb", "http://8.8.8.8/cb", "http://100.128.0.1/cb"])
+    async def test_public_hosts_need_https(self, ctx, uri):
+        admin, _, _ = ctx
+        assert _configure(admin, (uri,)).status_code == 422
+
     async def test_needs_at_least_one_and_at_most_ten(self, ctx):
         admin, _, _ = ctx
         assert _configure(admin, ()).status_code == 422
