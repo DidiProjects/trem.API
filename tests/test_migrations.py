@@ -406,7 +406,7 @@ class TestAppOnMigratedSchema:
             return secret, client.client_id, client.redirect_uris, secret_matches(client, secret)
 
         secret, client_id, uris, matches = self.run(scenario)
-        assert client_id == "immich" and uris == [uri, "https://fotos.example/cb"] and matches
+        assert client_id == "hub.immich" and uris == [uri, "https://fotos.example/cb"] and matches
         assert sql("SELECT secret_hash FROM oidc_clients")[0][0] == hash_secret(secret)
 
     def test_login_refresh_and_reuse_on_postgres(self, alembic_cfg):

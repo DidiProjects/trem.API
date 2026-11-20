@@ -606,7 +606,7 @@ não executa nada, e dentro de `<img>` o navegador já não executaria. A migrat
 os cinco serviços iniciais com logo e sem endereço (fora do catálogo até o admin preencher).
 
 Login único (OpenID Connect, plano em [docs/oidc.md](docs/oidc.md)): tabela `oidc_clients`,
-um por serviço (`client_id` = slug, `ON DELETE CASCADE`). O segredo (256 bits) aparece só
+um por serviço (`client_id` = `hub.<slug>`, `ON DELETE CASCADE`). O segredo (256 bits) aparece só
 ao criar ou rotacionar e fica como SHA-256, como as API keys. As redirect URIs são
 absolutas, sem usuário, senha nem fragmento, até dez, e serão comparadas exatamente;
 `http` só para endereço local, privado ou da Tailscale, o resto exige `https`.

@@ -1,6 +1,6 @@
 """login único (OpenID Connect) para os serviços do hub
 
-  - oidc_clients: um client OIDC por serviço do hub (client_id = slug), com o hash do
+  - oidc_clients: um client OIDC por serviço do hub (client_id = hub.<slug>), com o hash do
     segredo e as redirect URIs aceitas; some junto com o serviço
 
 Revision ID: 011

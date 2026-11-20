@@ -45,7 +45,7 @@ papel deles no protocolo, e a tela do trem.FRONT mostra o nome do serviço antes
 
 ### 1. Clients (feito)
 
-Tabela `oidc_clients`, um por serviço do hub (`client_id` = slug, some com o serviço).
+Tabela `oidc_clients`, um por serviço do hub (`client_id` = `hub.<slug>`, some com o serviço).
 Rotas em `/admin/hub/services/{slug}/oidc`: criar ou trocar as redirect URIs, rotacionar o
 segredo, remover. Segredo de 256 bits, mostrado uma vez, guardado como SHA-256 (como as
 API keys: hash lento só importa para segredo escolhido por gente). Redirect URIs absolutas,

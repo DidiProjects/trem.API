@@ -405,8 +405,13 @@ class HubServiceModel(Base):
         return f"HubServiceModel(id={self.id!r}, name={self.name!r})"
 
 
+# The id_token's aud is the client_id. An application slug has no dot, so "hub.<slug>" can
+# never equal the aud of an application's access token signed with the same key.
+OIDC_CLIENT_PREFIX = "hub."
+
+
 class OidcClientModel(Base):
-    """Login through trem.API (OpenID Connect) for a hub service; its client_id is the service slug."""
+    """Login through trem.API (OpenID Connect) for a hub service; its client_id is hub.<slug>."""
 
     __tablename__ = "oidc_clients"
 
@@ -430,4 +435,4 @@ class OidcClientModel(Base):
 
     @property
     def client_id(self) -> str:
-        return self.service.slug
+        return f"{OIDC_CLIENT_PREFIX}{self.service.slug}"

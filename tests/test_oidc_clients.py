@@ -54,7 +54,7 @@ class TestConfigure:
         response = _configure(admin)
         assert response.status_code == 201
         body = response.json()
-        assert body["client_id"] == "didiflix" and body["redirect_uris"] == [URI]
+        assert body["client_id"] == "hub.didiflix" and body["redirect_uris"] == [URI]
         assert len(body["client_secret"]) >= 43
         stored = await _stored(db_session)
         assert stored.secret_hash == hash_secret(body["client_secret"])
