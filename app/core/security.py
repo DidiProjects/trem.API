@@ -146,6 +146,18 @@ def create_access_token(
     )
 
 
+def sign_jwt(payload: dict) -> str:
+    """Signs with the current key and names it in the header, so a rotation does not break verification."""
+    settings = get_settings()
+    kid = public_jwk(settings.jwt_public_key_pem())["kid"]
+    return jwt.encode(payload, settings.jwt_private_key_pem(), algorithm=settings.JWT_ALGORITHM, headers={"kid": kid})
+
+
+# Audience of the access tokens handed to OIDC clients: not a valid application slug, so
+# trem.API's own routes and the applications never accept one.
+OIDC_AUDIENCE = "trem#oidc"
+
+
 # Not a valid application slug, so no application can ever be issued a token with it.
 MFA_AUDIENCE = "trem#mfa"
 

@@ -69,3 +69,17 @@ class OidcClientResponse(BaseModel):
 
 class OidcClientSecretResponse(OidcClientResponse):
     client_secret: Optional[str] = Field(default=None, description="Só aparece ao criar ou rotacionar")
+
+
+class OidcAuthorizationView(BaseModel):
+    """A pending login, for trem.FRONT's "enter <service> as <user>" screen."""
+
+    service_slug: str
+    service_name: str
+    logo_url: Optional[str]
+    username: str
+    allowed: bool = Field(description="Whether this account may open the service (hub:<slug>)")
+
+
+class OidcRedirect(BaseModel):
+    redirect: str = Field(description="Where the browser goes next, back to the service")

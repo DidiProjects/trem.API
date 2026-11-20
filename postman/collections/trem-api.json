@@ -1721,6 +1721,268 @@
       ]
     },
     {
+      "name": "Login for hub services (OIDC)",
+      "item": [
+        {
+          "name": "GET /oauth/authorize",
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "noauth"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/oauth/authorize",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "oauth",
+                "authorize"
+              ],
+              "query": [
+                {
+                  "key": "client_id",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "redirect_uri",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "response_type",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "scope",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "state",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "nonce",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "code_challenge",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "code_challenge_method",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Authorize\n\nOpened by the service in the browser: stores the request and goes to trem.FRONT's login screen."
+          }
+        },
+        {
+          "name": "GET /oauth/authorize/:request_id",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/oauth/authorize/:request_id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "oauth",
+                "authorize",
+                ":request_id"
+              ],
+              "variable": [
+                {
+                  "key": "request_id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Authorization View\n\nThe pending login for trem.FRONT's screen: which service, and whether this account may enter."
+          }
+        },
+        {
+          "name": "POST /oauth/authorize/:request_id/approve",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/oauth/authorize/:request_id/approve",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "oauth",
+                "authorize",
+                ":request_id",
+                "approve"
+              ],
+              "variable": [
+                {
+                  "key": "request_id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Approve\n\nLogs this account into the service: the front sends the browser to the address returned."
+          }
+        },
+        {
+          "name": "POST /oauth/authorize/:request_id/deny",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/oauth/authorize/:request_id/deny",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "oauth",
+                "authorize",
+                ":request_id",
+                "deny"
+              ],
+              "variable": [
+                {
+                  "key": "request_id",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Deny\n\nCancels the login: the service is told access_denied."
+          }
+        },
+        {
+          "name": "POST /oauth/token",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "type": "text",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "code",
+                  "type": "text",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "redirect_uri",
+                  "type": "text",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "code_verifier",
+                  "type": "text",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "client_id",
+                  "type": "text",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "client_secret",
+                  "type": "text",
+                  "value": "",
+                  "disabled": true
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/oauth/token",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "oauth",
+                "token"
+              ]
+            },
+            "description": "Token\n\nCalled by the service's server: trades the code (with the PKCE verifier) for an id_token and an access token."
+          }
+        },
+        {
+          "name": "GET /oauth/userinfo",
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "noauth"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/oauth/userinfo",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "oauth",
+                "userinfo"
+              ]
+            },
+            "description": "Userinfo\n\nClaims of the account, for an access token issued by /oauth/token."
+          }
+        },
+        {
+          "name": "POST /oauth/userinfo",
+          "request": {
+            "method": "POST",
+            "auth": {
+              "type": "noauth"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/oauth/userinfo",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "oauth",
+                "userinfo"
+              ]
+            },
+            "description": "Userinfo Post"
+          }
+        },
+        {
+          "name": "GET /.well-known/openid-configuration",
+          "request": {
+            "method": "GET",
+            "auth": {
+              "type": "noauth"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/.well-known/openid-configuration",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                ".well-known",
+                "openid-configuration"
+              ]
+            },
+            "description": "Openid Configuration\n\nOpenID Connect discovery for the hub services' login."
+          }
+        }
+      ]
+    },
+    {
       "name": "Users (legacy admin)",
       "item": [
         {

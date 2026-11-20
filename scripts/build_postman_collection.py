@@ -29,6 +29,7 @@ FOLDERS = [
     ("Admin: API clients", lambda p: p.startswith("/admin/clients")),
     ("Hub catalog", lambda p: p.startswith("/hub/")),
     ("Admin: hub catalog", lambda p: p.startswith("/admin/hub/")),
+    ("Login for hub services (OIDC)", lambda p: p.startswith("/oauth/") or p == "/.well-known/openid-configuration"),
     ("Users (legacy admin)", lambda p: p.startswith("/users")),
     ("PDF", lambda p: p.startswith("/pdf/")),
     ("Image", lambda p: p.startswith("/image/")),
@@ -43,6 +44,8 @@ PUBLIC = {
     "/health", "/.well-known/jwks.json", "/auth/login", "/auth/mfa/verify", "/auth/refresh",
     "/auth/logout", "/auth/username-available", "/auth/register", "/auth/verify-email", "/auth/resend-verification",
     "/auth/forgot-password", "/auth/reset-password", "/hub/services/{slug}/logo",
+    # OIDC: the browser, the service's server (its own Basic credentials) or the service's token.
+    "/.well-known/openid-configuration", "/oauth/authorize", "/oauth/token", "/oauth/userinfo",
 }
 
 # Field values that come from the environment or from an earlier response.
