@@ -270,6 +270,29 @@ Granting or revoking a service does not end the account's sessions: the catalog 
 from the database on each visit, and `hub:*` never travels in a `trem` token. The logo type
 comes from the bytes, not the declared Content-Type; SVGs are served with a sandboxing CSP.
 
+### Login for hub services (OpenID Connect)
+
+Jellyfin, Seerr and other hub services can log people in with their trem.API account
+(plan and decisions: [docs/oidc.md](docs/oidc.md)). Authorization code + PKCE (S256),
+confidential clients only; the client id is `hub.<slug>` and access is `hub:<slug>`.
+
+```
+GET  /.well-known/openid-configuration      discovery
+GET  /oauth/authorize                       opened by the service; goes to trem.FRONT /sso?request=…
+GET  /oauth/authorize/{request}             Bearer: service, account and whether it may enter
+POST /oauth/authorize/{request}/approve     Bearer: {"redirect": "<redirect_uri>?code&state&iss"}
+POST /oauth/authorize/{request}/deny        Bearer: back to the service with access_denied
+POST /oauth/token                           service's server: Basic or client_secret_post, code + code_verifier
+GET  /oauth/userinfo                        Bearer: the service's access token
+```
+
+The login screen is trem.FRONT's: the refresh cookie is Partitioned under its site, so a
+page on trem.API would not see the session. A request lasts 10 minutes and a code 60
+seconds, used once (a failed exchange spends it too). The id_token carries
+`preferred_username`, `email` and `groups` (`["admin"]` for `trem:admin`). The access
+token's audience is `trem#oidc`: it opens no trem.API route, and userinfo takes no other
+token. Redirect URIs match exactly; plain http only for local and Tailscale addresses.
+
 Sign-up: the account waits for e-mail confirmation, then for an admin to approve it and
 grant permissions. Usernames are public: the form checks one as it is typed
 (`username-available`, 60 per IP per 5 minutes) and `register` answers 409 for a taken one.

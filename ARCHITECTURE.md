@@ -611,6 +611,32 @@ ao criar ou rotacionar e fica como SHA-256, como as API keys. As redirect URIs s
 absolutas, sem usuário, senha nem fragmento, até dez, e serão comparadas exatamente;
 `http` só para endereço local, privado ou da Tailscale, o resto exige `https`.
 
+### Login único dos serviços do hub (`/oauth`, OpenID Connect)
+
+Plano e decisões em [docs/oidc.md](docs/oidc.md). Authorization code + PKCE (S256), só
+clients confidenciais (`hub.<slug>`). Tabela `oidc_grants`: o pedido aberto pelo serviço e,
+depois de aprovado, o código; os dois só como SHA-256, somem com o client e com o usuário.
+
+| Método | Path | Descrição |
+|--------|------|-----------|
+| GET | `/.well-known/openid-configuration` | Discovery |
+| GET | `/oauth/authorize` | Valida client e redirect URI exata, guarda o pedido (10 min) e manda para `/sso` do trem.FRONT |
+| GET | `/oauth/authorize/{pedido}` | Bearer: serviço, conta e se ela pode entrar |
+| POST | `/oauth/authorize/{pedido}/approve` | Bearer, exige `hub:<slug>`: código de 60 s e o redirect de volta |
+| POST | `/oauth/authorize/{pedido}/deny` | Bearer: volta ao serviço com `access_denied` |
+| POST | `/oauth/token` | Client por Basic ou `client_secret_post`; código + `code_verifier` → `id_token` e access token |
+| GET/POST | `/oauth/userinfo` | Bearer: o access token do serviço |
+
+A tela é a do trem.FRONT porque o refresh cookie é `Partitioned` sob o site dele: uma
+página no trem.API não veria a sessão. Client ou redirect URI desconhecidos nunca
+redirecionam para o endereço recebido (vão para `/sso?error=` do front); os outros erros
+voltam ao serviço com `state` e `iss` (RFC 9207). O `/oauth/token` **devolve** os erros em
+vez de lançá-los: o `get_db` faz rollback em exceção, e o código gasto por uma tentativa
+errada precisa continuar gasto. O access token do serviço tem `aud` `trem#oidc`: as rotas
+do trem.API o recusam, e o userinfo recusa qualquer outro token e relê a conta a cada
+chamada. Feito com PyJWT, não Authlib: o servidor do Authlib não tem integração com
+Starlette/FastAPI, e o recorte servido aqui é pequeno.
+
 ### MFA (`/auth/mfa`) — usuário logado
 
 | Método | Path | Descrição |
