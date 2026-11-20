@@ -608,7 +608,8 @@ os cinco serviços iniciais com logo e sem endereço (fora do catálogo até o a
 Login único (OpenID Connect, plano em [docs/oidc.md](docs/oidc.md)): tabela `oidc_clients`,
 um por serviço (`client_id` = slug, `ON DELETE CASCADE`). O segredo (256 bits) aparece só
 ao criar ou rotacionar e fica como SHA-256, como as API keys. As redirect URIs são
-absolutas, sem usuário, senha nem fragmento, até dez, e serão comparadas exatamente.
+absolutas, sem usuário, senha nem fragmento, até dez, e serão comparadas exatamente;
+`http` só para endereço local, privado ou da Tailscale, o resto exige `https`.
 
 ### MFA (`/auth/mfa`) — usuário logado
 

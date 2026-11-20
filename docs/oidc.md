@@ -49,8 +49,9 @@ Tabela `oidc_clients`, um por serviço do hub (`client_id` = slug, some com o se
 Rotas em `/admin/hub/services/{slug}/oidc`: criar ou trocar as redirect URIs, rotacionar o
 segredo, remover. Segredo de 256 bits, mostrado uma vez, guardado como SHA-256 (como as
 API keys: hash lento só importa para segredo escolhido por gente). Redirect URIs absolutas,
-sem usuário, senha nem fragmento, até dez; `http` aceito porque os serviços são acessados
-pela Tailscale.
+sem usuário, senha nem fragmento, até dez. `http` só para endereço local, privado ou da
+Tailscale (100.64.0.0/10), onde o código não cruza a internet; qualquer outro host exige
+`https`.
 
 ### 2. Provedor
 
@@ -82,6 +83,22 @@ segue para o serviço. Admin do serviço ganha a seção do login único (URIs, 
 Jellyfin com o plugin de SSO apontando para o trem.API (usuários casados pelo
 `preferred_username`, admin pelo grupo `admin`), Quick Connect para as TVs. Depois o
 Seerr na imagem `preview-new-oidc`.
+
+## Sem a Tailscale, um dia
+
+O plano é acessar a máquina direto, sem a Tailscale. Nada do fluxo depende dela: os
+redirecionamentos passam pelo navegador e o trem.API nunca chama o serviço; só o serviço
+chama o trem.API (`/oauth/token`, JWKS), pelo endereço público, que é o `iss`. A mudança
+fica na configuração:
+
+1. Publicar o serviço com `https` no próprio domínio (proxy reverso com certificado). O
+   Jellyfin também precisa de "Known proxies" para enxergar o `https`.
+2. Acrescentar a redirect URI `https://…` ao client, mantendo a da Tailscale durante a
+   transição (até dez por client), e tirar a antiga depois.
+3. No serviço, trocar o endereço público ("External URL" no Seerr) para o novo.
+
+`http` para host público é recusado justamente para essa hora: exposto direto, o código de
+login trafegaria aberto pela internet.
 
 ## Fora, por ora
 
