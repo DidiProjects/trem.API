@@ -124,3 +124,34 @@ públicos.
 - **Pedido aprovado por quem não o abriu**: `state` e PKCE no serviço; nome do serviço na
   tela de aprovação.
 - **Clickjacking** da tela `/sso`: `frame-ancestors 'none'` no trem.FRONT.
+
+## Alternativas consideradas (2026-11-20)
+
+Decisão: **manter o trem.API como provedor**. Registrado para reavaliar no futuro.
+
+| | Licença | Cobre | Peso |
+|---|---|---|---|
+| **Authentik** | MIT no núcleo (*open core*: edição Enterprise paga com recursos corporativos) | Cadastro, MFA, OIDC, SAML, LDAP, proxy (forward-auth) | Pesado: Postgres + Redis + workers, ~2 GB de RAM recomendados |
+| **Keycloak** | Apache 2.0 (CNCF) | Tudo do Authentik, o mais maduro | O mais pesado (Java) |
+| **Authelia** | Apache 2.0 | OIDC maduro + forward-auth | Leve, mas **sem cadastro**: usuários em YAML ou num LDAP à parte |
+| **LDAP** (LLDAP, OpenLDAP) | Abertos | Mesma senha em vários serviços | Não é login único e não leva MFA; sozinho não resolve |
+
+Nenhum deles evita o trabalho do lado do trem.API: com os usuários aqui, o produto ainda
+precisaria buscá-los por OIDC ou LDAP. Migrar de verdade significa mover as contas para lá,
+reescrever o login do trem.FRONT, fazer o trem.API aceitar tokens de outro emissor e
+recriar `hub:*` como grupos. E substitui só contas e login: as ferramentas (PDF, imagem,
+áudio, IA, scrapers) continuam no trem.API.
+
+**Por que ficamos:** contas, cadastro, MFA, permissões e o provedor já existem com testes;
+a escala é pequena; o servidor é o mesmo do Jellyfin.
+
+**O que pesa contra:** um provedor de identidade é alvo sensível, e aqui as correções de
+segurança dependem de nós. Mitigação: um teste por caso de erro dos RFCs e, antes de expor
+a máquina sem a Tailscale, a suíte de conformidade da OpenID Foundation
+(`openid-conformance-suite`, perfil *Basic OP*) contra o ambiente local.
+
+**Reavaliar (Authentik primeiro) se:**
+
+- as contas passarem a ser de clientes pagantes ou de gente de fora da família;
+- os serviços pedirem SAML, LDAP ou porteiro para apps sem usuários (Sonarr, Radarr);
+- manter código de autenticação deixar de valer o esforço.
