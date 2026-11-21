@@ -1,12 +1,13 @@
 """Bearer tokens from authentik (trem.AUTH) next to trem.API's own, against the suite's SQLite."""
 import time
+import urllib.error
 from types import SimpleNamespace
 
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
-from jwt import PyJWKClientConnectionError
+from jwt import PyJWKClientConnectionError, jwks_client
 from sqlalchemy import select
 
 from app.core import authentik
@@ -184,3 +185,21 @@ def test_is_authentik_token_reads_only_the_issuer(monkeypatch):
     assert authentik.is_authentik_token(token())
     assert not authentik.is_authentik_token(token(iss="https://elsewhere/"))
     assert not authentik.is_authentik_token("not-a-jwt")
+
+
+def test_jwks_are_fetched_with_trem_api_user_agent(monkeypatch):
+    # Cloudflare answers 403 to urllib's default "Python-urllib/3.x", which surfaced as a 503 on every call.
+    sent = {}
+
+    def fake_urlopen(request, **_kwargs):
+        sent["user_agent"] = request.get_header("User-agent")
+        raise urllib.error.URLError("stop")
+
+    monkeypatch.setattr(jwks_client.urllib.request, "urlopen", fake_urlopen)
+    authentik._jwks_client.cache_clear()
+    try:
+        with pytest.raises(PyJWKClientConnectionError):
+            authentik._jwks_client("https://auth.example/application/o/trem/jwks/").fetch_data()
+    finally:
+        authentik._jwks_client.cache_clear()
+    assert sent["user_agent"] == "trem.API"
