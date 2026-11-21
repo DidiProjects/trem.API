@@ -9,6 +9,7 @@ from app.core.exceptions import (
     TokenExpiredError,
     TokenInvalidError,
 )
+from app.core.authentik import AuthentikUnavailableError, decode_authentik_token, is_authentik_token
 from app.core.security import decode_token
 from app.domain.entities.api_client import Principal
 from app.domain.entities.permission import split_permission_key
@@ -16,6 +17,7 @@ from app.domain.entities.user import User
 from app.infrastructure.database.connection import get_db
 from app.repositories.user_repository import UserRepository
 from app.services.api_client_service import ApiClientService
+from app.services.authentik_user_service import AuthentikUserService
 
 _bearer = HTTPBearer(auto_error=False)
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
@@ -31,6 +33,23 @@ async def get_current_user(
             detail="Token de autenticação não fornecido",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    if is_authentik_token(credentials.credentials):
+        try:
+            claims = await decode_authentik_token(credentials.credentials)
+        except TokenExpiredError:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expirado")
+        except TokenInvalidError:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido")
+        except AuthentikUnavailableError as error:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=error.message)
+        try:
+            user = await AuthentikUserService(db).resolve(claims)
+        except TokenInvalidError:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token inválido")
+        if not user.is_active:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Usuário bloqueado ou suspenso")
+        return user
+
     try:
         payload = decode_token(credentials.credentials)
     except TokenExpiredError:
@@ -150,9 +169,10 @@ def require_permission(key: str) -> Callable:
     """
     Factory: exige uma permissão "<aplicação>:<permissão>", seja o chamador usuário ou cliente.
 
-    A permissão vem sempre do banco (registro do usuário ou do cliente), nunca de
-    algo que o chamador possa forjar no request — nem do claim do JWT, que
-    poderia estar defasado em relação ao banco.
+    A permissão vem do banco (registro do usuário ou do cliente), nunca de algo que o
+    chamador possa forjar no request — nem do claim do JWT próprio, que poderia estar
+    defasado em relação ao banco. A exceção é o token do authentik: lá os grupos são a
+    fonte da verdade, assinados por ele e válidos por 10 minutos.
     """
     split_permission_key(key)
 
