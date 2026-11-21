@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     # Retired public keys still accepted while their tokens expire, separated by "|||".
     JWT_EXTRA_PUBLIC_KEYS: str = ""
 
+    # authentik (trem.AUTH): when set, Bearer tokens it issues to the trem client are accepted
+    # next to trem.API's own. The trem provider's issuer, e.g.
+    # https://auth.didilv93.com/application/o/trem/ (keys come from <issuer>jwks/).
+    AUTHENTIK_ISSUER: str = ""
+    AUTHENTIK_AUDIENCE: str = "trem"
+
     # Login throttling, in memory (the API already runs as a single process). Counted per
     # username, existing or not, so a lockout does not reveal which accounts exist.
     LOGIN_MAX_FAILURES_PER_USERNAME: int = 5
