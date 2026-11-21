@@ -163,6 +163,7 @@ jobs:
             -e JWT_PUBLIC_KEY="${{ secrets.JWT_PUBLIC_KEY }}" \
             -e API_PORT="${{ vars.API_PORT }}" \
             -e API_URL="${{ vars.API_URL }}" \
+            -e AUTHENTIK_ISSUER="${{ vars.AUTHENTIK_ISSUER }}" \
             -e FRONTEND_URL="${{ vars.FRONTEND_URL }}" \
             -e CORS_ORIGINS="${{ vars.CORS_ORIGINS }}" \
             -e API_KEY="${{ secrets.API_KEY }}" \

@@ -93,6 +93,14 @@ app/
   cookie, so fronts on other domains (`CORS_ORIGINS`) call the API directly
 - Login throttling per username and per IP, with the same answer for unknown users
 - Public keys at `/.well-known/jwks.json` so other applications verify tokens locally
+- **authentik tokens (trem.AUTH):** with `AUTHENTIK_ISSUER` set (the `trem` provider's issuer,
+  e.g. `https://auth.didilv93.com/application/o/trem/`), a Bearer issued by authentik to the
+  `trem` client is accepted next to trem.API's own. It is checked against `<issuer>jwks/`
+  (RS256, `iss`, `aud` = `AUTHENTIK_AUDIENCE`, default `trem`, `exp`). The account is linked by
+  `preferred_username` and created on its first call, without a local password; its
+  permissions are the token's `groups` named like permissions (`trem:*`, `hub:<slug>`), and a
+  second factor (`amr` with `mfa`) counts for administration. authentik unreachable is a 503.
+  Without the variable, nothing changes.
 
 ## Requirements
 
