@@ -409,6 +409,46 @@ class TestAppOnMigratedSchema:
         assert client_id == "hub.immich" and uris == [uri, "https://fotos.example/cb"] and matches
         assert sql("SELECT secret_hash FROM oidc_clients")[0][0] == hash_secret(secret)
 
+    def test_oidc_login_on_postgres(self, alembic_cfg):
+        from app.repositories.user_repository import UserRepository
+        from app.services.hub_service import HubService
+        from app.services.oidc_client_service import OidcClientService
+        from app.services.oidc_provider_service import (
+            AuthorizationRequest, OAuthError, OidcProviderService, TokenRequest, s256,
+        )
+
+        command.upgrade(alembic_cfg, "head")
+        uid = uuid.uuid4()
+        sql("INSERT INTO users (id, username, password_hash, status) VALUES (:id, 'ana', 'x', 'active')", id=uid)
+        uri, verifier = "http://100.64.0.1:8096/cb", "v" * 43
+
+        async def approve(session):
+            _, secret = await OidcClientService(session).configure("immich", [uri])
+            user = await UserRepository(session).get_by_id(str(uid))
+            await HubService(session).grant(user, "immich", str(uid))
+            provider = OidcProviderService(session)
+            target = await provider.authorize(AuthorizationRequest(
+                "hub.immich", uri, "code", "openid profile", "st", None, s256(verifier), "S256",
+            ))
+            raw = target.split("request=", 1)[1]
+            user = await UserRepository(session).get_by_id(str(uid))
+            code = (await provider.approve(raw, user)).split("code=", 1)[1].split("&", 1)[0]
+            return secret, code
+
+        secret, code = self.run(approve)
+
+        async def exchange(session, verifier_used):
+            provider = OidcProviderService(session)
+            client = await provider.authenticate_client("hub.immich", secret)
+            try:
+                return await provider.exchange(client, TokenRequest("authorization_code", code, uri, verifier_used))
+            except OAuthError as e:
+                return e.error
+
+        assert self.run(lambda s: exchange(s, "w" * 43)) == "invalid_grant"
+        assert self.run(lambda s: exchange(s, verifier)) == "invalid_grant"
+        assert sql("SELECT used_at IS NOT NULL, user_id FROM oidc_grants")[0] == (True, uid)
+
     def test_login_refresh_and_reuse_on_postgres(self, alembic_cfg):
         """The atomic claim is an UPDATE ... WHERE revoked = false: its rowcount matters on PG."""
         from app.core.exceptions import InvalidCredentialsError
@@ -746,3 +786,31 @@ class TestUpgrade011:
         assert sql("SELECT to_regclass('oidc_clients')")[0][0] is None
         command.upgrade(alembic_cfg, "011")
         assert sql("SELECT count(*) FROM oidc_clients")[0][0] == 0
+
+
+class TestUpgrade012:
+    def test_grants_go_with_the_client_and_the_user(self, alembic_cfg):
+        command.upgrade(alembic_cfg, "012")
+        uid = uuid.uuid4()
+        sql("INSERT INTO users (id, username, password_hash) VALUES (:id, 'ana', 'x')", id=uid)
+        sql("""
+            INSERT INTO oidc_clients (hub_service_id, secret_hash, redirect_uris)
+            SELECT s.id, repeat('a', 64), '["https://tv.example/cb"]'
+            FROM hub_services s JOIN permissions p ON p.id = s.permission_id WHERE p.name = 'immich'
+        """)
+        for n, user in enumerate((uid, None)):
+            sql("""
+                INSERT INTO oidc_grants (oidc_client_id, request_hash, redirect_uri, scope, state,
+                                         code_challenge, expires_at, user_id)
+                SELECT id, :h, 'https://tv.example/cb', 'openid', 's', :c, now(), :u FROM oidc_clients
+            """, h=str(n) * 64, c="c" * 43, u=user)
+        sql("DELETE FROM users WHERE id = :id", id=uid)
+        assert sql("SELECT count(*) FROM oidc_grants")[0][0] == 1
+        sql("DELETE FROM oidc_clients")
+        assert sql("SELECT count(*) FROM oidc_grants")[0][0] == 0
+
+    def test_round_trip(self, alembic_cfg):
+        command.upgrade(alembic_cfg, "012")
+        command.downgrade(alembic_cfg, "011")
+        assert sql("SELECT to_regclass('oidc_grants')")[0][0] is None
+        command.upgrade(alembic_cfg, "012")

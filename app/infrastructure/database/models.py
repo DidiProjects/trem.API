@@ -436,3 +436,36 @@ class OidcClientModel(Base):
     @property
     def client_id(self) -> str:
         return f"{OIDC_CLIENT_PREFIX}{self.service.slug}"
+
+
+class OidcGrantModel(Base):
+    """
+    One login through trem.API: the request a service opened, then the code it trades for
+    tokens. The request and the code are random tokens kept only as SHA-256.
+    """
+
+    __tablename__ = "oidc_grants"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    oidc_client_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("oidc_clients.id", ondelete="CASCADE"), nullable=False
+    )
+    request_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    redirect_uri: Mapped[str] = mapped_column(String(500), nullable=False)
+    scope: Mapped[str] = mapped_column(String(200), nullable=False)
+    state: Mapped[str] = mapped_column(String(500), nullable=False)
+    nonce: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    code_challenge: Mapped[str] = mapped_column(String(128), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, index=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True
+    )
+    amr: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    code_hash: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
+    code_expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    used_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, default=_now, server_default=func.now()
+    )
+
+    client: Mapped["OidcClientModel"] = relationship("OidcClientModel", lazy="joined")

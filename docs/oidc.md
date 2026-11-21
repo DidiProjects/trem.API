@@ -1,6 +1,6 @@
 # OIDC no trem.API — plano
 
-Status: **fase 1 implementada** (clients). O resto está descrito abaixo, na ordem de entrega.
+Status: **fases 1 e 2 implementadas** (clients e provedor). O resto está descrito abaixo, na ordem de entrega.
 
 ## Por que
 
@@ -53,7 +53,7 @@ sem usuário, senha nem fragmento, até dez. `http` só para endereço local, pr
 Tailscale (100.64.0.0/10), onde o código não cruza a internet; qualquer outro host exige
 `https`.
 
-### 2. Provedor
+### 2. Provedor (feito)
 
 | Endpoint | Função |
 |---|---|
@@ -61,6 +61,7 @@ Tailscale (100.64.0.0/10), onde o código não cruza a internet; qualquer outro 
 | `GET /oauth/authorize` | valida `client_id`, `redirect_uri` (exata), `response_type=code`, `scope` com `openid`, `state`, `nonce`, `code_challenge` S256; guarda o pedido (vida curta) e manda para o trem.FRONT |
 | `GET /oauth/authorize/{id}` | o pedido para a tela do trem.FRONT: nome e logo do serviço (Bearer) |
 | `POST /oauth/authorize/{id}/approve` | Bearer; exige `hub:<slug>`; gera o código e devolve o redirect |
+| `POST /oauth/authorize/{id}/deny` | Bearer; volta ao serviço com `access_denied` |
 | `POST /oauth/token` | `authorization_code` + `code_verifier`, client autenticado por `client_secret_basic` ou `client_secret_post` |
 | `GET /oauth/userinfo` | claims do usuário para o access token emitido no `/oauth/token` |
 
@@ -68,6 +69,15 @@ Código de autorização: 256 bits, guardado como SHA-256, uso único, 60 s, ama
 client, `redirect_uri`, usuário, `nonce`, `code_challenge`, `amr`. Erro do pedido com
 `redirect_uri` válida volta para o serviço (`error`, `state`, `iss`, RFC 9207); com
 `client_id` ou `redirect_uri` inválidos, nunca redireciona.
+
+Um código gasto (inclusive por uma troca que falhou) não vale de novo. O RFC 6749 sugere
+revogar os tokens já emitidos quando um código é reapresentado; aqui eles são JWT sem
+estado e duram pouco (access token 15 min, id_token 5 min), e o userinfo relê a conta a
+cada chamada.
+
+Biblioteca: PyJWT, sem Authlib. O servidor do Authlib não tem integração com
+Starlette/FastAPI, e o recorte (um grant, clients confidenciais) é pequeno; cada caso de
+erro dos RFCs tem teste em `tests/test_oidc_provider.py`.
 
 `id_token`: `iss`, `sub` (id do usuário), `aud` (= `client_id`), `exp`, `iat`, `nonce`,
 `amr`, `azp`, `preferred_username`, `name`, `email` (scope `email`) e `groups` (`admin`
@@ -114,3 +124,34 @@ públicos.
 - **Pedido aprovado por quem não o abriu**: `state` e PKCE no serviço; nome do serviço na
   tela de aprovação.
 - **Clickjacking** da tela `/sso`: `frame-ancestors 'none'` no trem.FRONT.
+
+## Alternativas consideradas (2026-11-20)
+
+Decisão: **manter o trem.API como provedor**. Registrado para reavaliar no futuro.
+
+| | Licença | Cobre | Peso |
+|---|---|---|---|
+| **Authentik** | MIT no núcleo (*open core*: edição Enterprise paga com recursos corporativos) | Cadastro, MFA, OIDC, SAML, LDAP, proxy (forward-auth) | Pesado: Postgres + Redis + workers, ~2 GB de RAM recomendados |
+| **Keycloak** | Apache 2.0 (CNCF) | Tudo do Authentik, o mais maduro | O mais pesado (Java) |
+| **Authelia** | Apache 2.0 | OIDC maduro + forward-auth | Leve, mas **sem cadastro**: usuários em YAML ou num LDAP à parte |
+| **LDAP** (LLDAP, OpenLDAP) | Abertos | Mesma senha em vários serviços | Não é login único e não leva MFA; sozinho não resolve |
+
+Nenhum deles evita o trabalho do lado do trem.API: com os usuários aqui, o produto ainda
+precisaria buscá-los por OIDC ou LDAP. Migrar de verdade significa mover as contas para lá,
+reescrever o login do trem.FRONT, fazer o trem.API aceitar tokens de outro emissor e
+recriar `hub:*` como grupos. E substitui só contas e login: as ferramentas (PDF, imagem,
+áudio, IA, scrapers) continuam no trem.API.
+
+**Por que ficamos:** contas, cadastro, MFA, permissões e o provedor já existem com testes;
+a escala é pequena; o servidor é o mesmo do Jellyfin.
+
+**O que pesa contra:** um provedor de identidade é alvo sensível, e aqui as correções de
+segurança dependem de nós. Mitigação: um teste por caso de erro dos RFCs e, antes de expor
+a máquina sem a Tailscale, a suíte de conformidade da OpenID Foundation
+(`openid-conformance-suite`, perfil *Basic OP*) contra o ambiente local.
+
+**Reavaliar (Authentik primeiro) se:**
+
+- as contas passarem a ser de clientes pagantes ou de gente de fora da família;
+- os serviços pedirem SAML, LDAP ou porteiro para apps sem usuários (Sonarr, Radarr);
+- manter código de autenticação deixar de valer o esforço.

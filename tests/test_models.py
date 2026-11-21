@@ -47,6 +47,7 @@ class TestMetadata:
             "api_client_permissions",
             "hub_services",
             "oidc_clients",
+            "oidc_grants",
         }
 
     def test_refresh_token_indexes_are_declared(self):
