@@ -29,7 +29,8 @@ def is_authentik_token(token: str) -> bool:
 @lru_cache
 def _jwks_client(url: str) -> PyJWKClient:
     # Keys are cached for an hour; an unknown `kid` (authentik rotated) refetches once.
-    return PyJWKClient(url, cache_keys=True, lifespan=3600, timeout=5)
+    # Cloudflare in front of authentik answers 403 to urllib's default "Python-urllib/3.x".
+    return PyJWKClient(url, cache_keys=True, lifespan=3600, timeout=5, headers={"User-Agent": "trem.API"})
 
 
 def _decode(token: str) -> dict:
