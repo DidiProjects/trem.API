@@ -7,6 +7,7 @@ from sqlalchemy import (
     CheckConstraint,
     Column,
     ForeignKey,
+    JSON,
     Index,
     Integer,
     LargeBinary,
@@ -402,3 +403,36 @@ class HubServiceModel(Base):
 
     def __repr__(self) -> str:  # without the logo bytes
         return f"HubServiceModel(id={self.id!r}, name={self.name!r})"
+
+
+# The id_token's aud is the client_id. An application slug has no dot, so "hub.<slug>" can
+# never equal the aud of an application's access token signed with the same key.
+OIDC_CLIENT_PREFIX = "hub."
+
+
+class OidcClientModel(Base):
+    """Login through trem.API (OpenID Connect) for a hub service; its client_id is hub.<slug>."""
+
+    __tablename__ = "oidc_clients"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    hub_service_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("hub_services.id", ondelete="CASCADE"), unique=True, nullable=False
+    )
+    # SHA-256, like the API keys: the secret is 256 random bits, so a slow hash adds nothing.
+    secret_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    secret_created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, default=_now)
+    # Compared exactly, never by prefix: a loose match turns the login into an open redirect.
+    redirect_uris: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, default=_now, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, default=_now, onupdate=_now, server_default=func.now()
+    )
+
+    service: Mapped["HubServiceModel"] = relationship("HubServiceModel", lazy="joined")
+
+    @property
+    def client_id(self) -> str:
+        return f"{OIDC_CLIENT_PREFIX}{self.service.slug}"

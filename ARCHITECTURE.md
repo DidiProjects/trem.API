@@ -594,12 +594,22 @@ remove a permissão e as concessões.
 | DELETE | `/admin/hub/services/{slug}` | Remove com permissão e concessões |
 | PUT/DELETE | `/admin/hub/services/{slug}/logo` | Envia (multipart `file`) / remove |
 | PUT/DELETE | `/admin/hub/services/{slug}/users/{id}` | Libera / tira o acesso da conta |
+| GET    | `/admin/hub/services/{slug}/oidc` | Client OIDC do serviço (404 sem login único) |
+| PUT    | `/admin/hub/services/{slug}/oidc` | `{redirect_uris}`: cria (201, com o segredo) ou troca as URIs (200) |
+| POST   | `/admin/hub/services/{slug}/oidc/secret` | Novo segredo; o antigo para na hora |
+| DELETE | `/admin/hub/services/{slug}/oidc` | Remove o login único |
 
 Liberar ou tirar um serviço **não** encerra sessões, ao contrário de
 `PUT /admin/users/{id}/permissions`: o catálogo é lido do banco a cada visita e `hub:*`
 não vai em token da `trem`. O SVG é servido com CSP `sandbox` e `nosniff`: aberto direto
 não executa nada, e dentro de `<img>` o navegador já não executaria. A migration 010 traz
 os cinco serviços iniciais com logo e sem endereço (fora do catálogo até o admin preencher).
+
+Login único (OpenID Connect, plano em [docs/oidc.md](docs/oidc.md)): tabela `oidc_clients`,
+um por serviço (`client_id` = `hub.<slug>`, `ON DELETE CASCADE`). O segredo (256 bits) aparece só
+ao criar ou rotacionar e fica como SHA-256, como as API keys. As redirect URIs são
+absolutas, sem usuário, senha nem fragmento, até dez, e serão comparadas exatamente;
+`http` só para endereço local, privado ou da Tailscale, o resto exige `https`.
 
 ### MFA (`/auth/mfa`) — usuário logado
 

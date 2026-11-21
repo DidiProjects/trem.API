@@ -1597,6 +1597,126 @@
             },
             "description": "Revoke Service"
           }
+        },
+        {
+          "name": "GET /admin/hub/services/:slug/oidc",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/admin/hub/services/:slug/oidc",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "hub",
+                "services",
+                ":slug",
+                "oidc"
+              ],
+              "variable": [
+                {
+                  "key": "slug",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Get Oidc Client\n\nThe service's login through trem.API; 404 while it has none."
+          }
+        },
+        {
+          "name": "PUT /admin/hub/services/:slug/oidc",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"redirect_uris\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/hub/services/:slug/oidc",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "hub",
+                "services",
+                ":slug",
+                "oidc"
+              ],
+              "variable": [
+                {
+                  "key": "slug",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Configure Oidc Client\n\nCreates the client (201, with the secret, shown only this once) or replaces its redirect URIs (200)."
+          }
+        },
+        {
+          "name": "DELETE /admin/hub/services/:slug/oidc",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/admin/hub/services/:slug/oidc",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "hub",
+                "services",
+                ":slug",
+                "oidc"
+              ],
+              "variable": [
+                {
+                  "key": "slug",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Delete Oidc Client"
+          }
+        },
+        {
+          "name": "POST /admin/hub/services/:slug/oidc/secret",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/admin/hub/services/:slug/oidc/secret",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "hub",
+                "services",
+                ":slug",
+                "oidc",
+                "secret"
+              ],
+              "variable": [
+                {
+                  "key": "slug",
+                  "value": ""
+                }
+              ]
+            },
+            "description": "Rotate Oidc Secret\n\nA new secret, shown only this once; the old one stops working at once."
+          }
         }
       ]
     },
