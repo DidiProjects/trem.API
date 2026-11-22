@@ -646,16 +646,10 @@ metrics = response.json()["metrics"]
 print(f"Reduced {metrics['reduction_percent']}%")
 ```
 
-## Web Page
-
-`/` is the playground for every endpoint. It authenticates with an API key typed in its
-field (`X-API-Key`): people log in to trem through authentik, in trem.FRONT, where they also
-create their personal keys. Scripts: `app/static/credentials.js` (the key) before
-`app/static/script.js` (the tools), which sends requests through `authFetch`.
-
 ## Interactive Documentation
 
-Swagger UI: `http://localhost:3002/docs`
+Swagger UI: `http://localhost:3002/docs` (`/` redirects there). It is the only page trem.API
+serves: people use trem through trem.FRONT.
 
 ## License
 

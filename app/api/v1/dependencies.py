@@ -76,7 +76,7 @@ async def get_current_principal(
     """
     Resolve quem chamou, aceitando as duas formas de credencial:
 
-      X-API-Key      -> aplicação consumidora (outra API, script, playground)
+      X-API-Key      -> aplicação consumidora (outra API, script)
       Bearer <token do authentik> -> usuário humano
 
     A API key é checada primeiro por ser o caminho majoritário hoje. O
