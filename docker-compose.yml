@@ -17,6 +17,7 @@ services:
       - API_URL=${API_URL}
       # Login (authentik, trem.AUTH): the trem provider's issuer
       - AUTHENTIK_ISSUER=${AUTHENTIK_ISSUER:-}
+      - AUTHENTIK_WEBHOOK_SECRET=${AUTHENTIK_WEBHOOK_SECRET:-}
       - UPLOAD_DIR=/tmp/uploads
       - MAX_FILE_SIZE=52428800
       # Banco
