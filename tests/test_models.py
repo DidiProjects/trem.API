@@ -2,22 +2,19 @@
 Testes dos modelos ORM contra o SQLite da suíte.
 
 Cobrem o que é fácil de quebrar numa migration: defaults, unicidade,
-CHECK constraints, cascade e os índices declarados.
+cascade e os índices declarados.
 """
 import uuid
-from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import inspect, select
 from sqlalchemy.exc import IntegrityError
 
 from app.domain.entities.permission import TremPermission
-from app.domain.entities.user import UserStatus
 from app.infrastructure.database.models import (
     Base,
     ApplicationModel,
     PermissionModel,
-    RefreshTokenModel,
     UserModel,
     user_permissions,
 )
@@ -27,7 +24,6 @@ def _user(username="alguem", **kwargs):
     params = {
         "username": username,
         "email": f"{username}@example.com",
-        "password_hash": "$argon2id$hash",
     }
     params.update(kwargs)
     return UserModel(**params)
@@ -37,21 +33,13 @@ class TestMetadata:
     def test_declares_expected_tables(self):
         assert set(Base.metadata.tables) == {
             "applications",
-            "email_tokens",
-            "mfa_recovery_codes",
             "permissions",
             "users",
-            "refresh_tokens",
             "api_clients",
             "user_permissions",
             "api_client_permissions",
             "hub_services",
         }
-
-    def test_refresh_token_indexes_are_declared(self):
-        indexes = {i.name for i in Base.metadata.tables["refresh_tokens"].indexes}
-        assert "ix_refresh_tokens_user_id_revoked" in indexes
-        assert "ix_refresh_tokens_expires_at" in indexes
 
     def test_user_lookup_columns_are_indexed(self):
         indexed = {
@@ -59,22 +47,10 @@ class TestMetadata:
             for index in Base.metadata.tables["users"].indexes
             for col in index.columns
         }
-        assert {"username", "status"} <= indexed
+        assert "username" in indexed
 
 
 class TestUserDefaults:
-    async def test_new_user_is_blocked(self, db_session, seeded_permissions):
-        user = _user()
-        db_session.add(user)
-        await db_session.flush()
-        assert user.status == UserStatus.BLOCKED.value
-
-    async def test_new_user_must_change_password(self, db_session, seeded_permissions):
-        user = _user()
-        db_session.add(user)
-        await db_session.flush()
-        assert user.must_change_password is True
-
     async def test_id_is_generated(self, db_session, seeded_permissions):
         user = _user()
         db_session.add(user)
@@ -87,14 +63,6 @@ class TestUserDefaults:
         await db_session.flush()
         assert user.created_at is not None
         assert user.updated_at is not None
-
-    async def test_optional_fields_start_null(self, db_session, seeded_permissions):
-        user = _user()
-        db_session.add(user)
-        await db_session.flush()
-        assert user.last_login_at is None
-        assert user.provisional_password_sent_at is None
-
 
 class TestUserConstraints:
     async def test_username_is_unique(self, db_session, seeded_permissions):
@@ -117,37 +85,6 @@ class TestUserConstraints:
         db_session.add(_user("user-a", email=None))
         db_session.add(_user("user-b", email=None))
         await db_session.flush()  # NULL não colide em índice único
-
-    @pytest.mark.parametrize(
-        "status", [UserStatus.ACTIVE, UserStatus.BLOCKED, UserStatus.SUSPENDED]
-    )
-    async def test_valid_status_is_accepted(self, db_session, seeded_permissions, status):
-        db_session.add(
-            _user(
-                f"user-{status.value}",
-                status=status.value,
-            )
-        )
-        await db_session.flush()
-
-    async def test_invalid_status_is_rejected_by_check_constraint(
-        self, db_session, seeded_permissions
-    ):
-        """A regra de status vive no banco, não só na aplicação."""
-        db_session.add(
-            _user(
-                "invalido",
-                status="superadmin",
-            )
-        )
-        with pytest.raises(IntegrityError):
-            await db_session.flush()
-
-    async def test_password_hash_is_required(self, db_session, seeded_permissions):
-        user = UserModel(username="sem-hash")
-        db_session.add(user)
-        with pytest.raises(IntegrityError):
-            await db_session.flush()
 
     async def test_unknown_permission_is_rejected(self, db_session, seeded_permissions):
         user = _user("orfao")
@@ -226,52 +163,6 @@ class TestPermissionConstraints:
         assert {p.key for p in result.scalars()} == {p.value for p in TremPermission}
 
 
-class TestRefreshTokenModel:
-    def _token(self, user, token_hash="hash-x", **kwargs):
-        params = {
-            "user_id": user.id,
-            "token_hash": token_hash,
-            "expires_at": datetime.now(timezone.utc) + timedelta(days=7),
-            "family_id": uuid.uuid4(),
-            "application_id": user.permissions[0].application_id,
-        }
-        params.update(kwargs)
-        return RefreshTokenModel(**params)
-
-    async def test_defaults_to_not_revoked(self, db_session, persisted_user):
-        token = self._token(persisted_user)
-        db_session.add(token)
-        await db_session.flush()
-        assert token.revoked is False
-
-    async def test_token_hash_is_unique(self, db_session, persisted_user):
-        db_session.add(self._token(persisted_user, "mesmo-hash"))
-        await db_session.flush()
-
-        db_session.add(self._token(persisted_user, "mesmo-hash"))
-        with pytest.raises(IntegrityError):
-            await db_session.flush()
-
-    async def test_deleting_user_cascades_to_tokens(self, db_session, persisted_user):
-        db_session.add(self._token(persisted_user))
-        await db_session.flush()
-
-        await db_session.delete(persisted_user)
-        await db_session.flush()
-
-        result = await db_session.execute(select(RefreshTokenModel))
-        assert result.scalars().all() == []
-
-    async def test_stores_ipv6_address(self, db_session, persisted_user):
-        """A coluna precisa comportar IPv6 (45 chars no fallback não-PG)."""
-        token = self._token(
-            persisted_user, ip_address="2001:0db8:85a3:0000:0000:8a2e:0370:7334"
-        )
-        db_session.add(token)
-        await db_session.flush()
-        assert token.ip_address.startswith("2001:")
-
-
 class TestRelationships:
     async def test_user_exposes_permissions(self, db_session, persisted_user):
         assert [p.key for p in persisted_user.permissions] == [TremPermission.FILE_EDITOR.value]
@@ -281,18 +172,8 @@ class TestRelationships:
 
 
 class TestRepr:
-    async def test_user_repr_hides_password_hash(self, db_session, persisted_user):
-        """__repr__ aparece em traceback e log — não pode vazar o hash."""
-        assert "$argon2id$" not in repr(persisted_user)
+    async def test_user_repr_shows_the_username(self, db_session, persisted_user):
         assert persisted_user.username in repr(persisted_user)
-
-    async def test_refresh_token_repr_hides_token_hash(self, db_session, persisted_user):
-        token = RefreshTokenModel(
-            user_id=persisted_user.id,
-            token_hash="segredo-absoluto",
-            expires_at=datetime.now(timezone.utc) + timedelta(days=1),
-        )
-        assert "segredo-absoluto" not in repr(token)
 
     async def test_permission_repr_includes_name(self, db_session, persisted_user):
         assert "file_editor" in repr(persisted_user.permissions[0])
