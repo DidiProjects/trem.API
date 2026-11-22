@@ -92,7 +92,6 @@ app/
 │   ├── file_validator.py
 │   └── pagination.py
 │
-├── static/
 └── main.py
 
 alembic/

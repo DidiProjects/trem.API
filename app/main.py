@@ -1,15 +1,12 @@
 import asyncio
 import contextlib
-import hashlib
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
-from starlette.middleware.base import BaseHTTPMiddleware
+from fastapi.responses import RedirectResponse
 
 from app.api.middleware.body_size_limit import BodySizeLimitMiddleware
 from app.api.v1.routers import admin as admin_router
@@ -37,22 +34,6 @@ _handler = logging.StreamHandler()
 _handler.setFormatter(logging.Formatter("%(levelname)s:     %(name)s %(message)s"))
 _app_logger.addHandler(_handler)
 
-static_dir = Path(__file__).parent / "static"
-
-
-def _file_hash(path: Path) -> str:
-    if path.exists():
-        return hashlib.md5(path.read_bytes()).hexdigest()[:8]
-    return ""
-
-
-_static_hashes = {
-    "style.css": _file_hash(static_dir / "style.css"),
-    "credentials.js": _file_hash(static_dir / "credentials.js"),
-    "script.js": _file_hash(static_dir / "script.js"),
-}
-
-
 _SWEEP_INTERVAL_SECONDS = 600
 
 
@@ -72,24 +53,12 @@ async def lifespan(app: FastAPI):
     jobs.shutdown()
 
 
-class CacheControlMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        response = await call_next(request)
-        if request.url.path.startswith("/static/"):
-            if "?" in str(request.url):
-                response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
-            else:
-                response.headers["Cache-Control"] = "public, max-age=3600"
-        return response
-
-
 app = FastAPI(
     title="trem.API",
     version="2.0.0",
     lifespan=lifespan,
 )
 
-app.add_middleware(CacheControlMiddleware)
 app.add_middleware(
     BodySizeLimitMiddleware,
     default_limit=get_settings().MAX_REQUEST_SIZE,
@@ -112,7 +81,6 @@ if get_settings().cors_origins():
         expose_headers=["Retry-After"],
         max_age=600,
     )
-app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 # --- Routers v1: autenticação e gestão de usuários ---
 app.include_router(me_router.router)
@@ -135,23 +103,8 @@ app.include_router(scraperRoute.router, prefix="/scrapers/linkedin", tags=["Scra
 
 @app.get("/", include_in_schema=False)
 async def root():
-    html = (static_dir / "index.html").read_text(encoding="utf-8")
-    html = html.replace(
-        'href="/static/style.css"',
-        f'href="/static/style.css?v={_static_hashes["style.css"]}"',
-    )
-    for script in ("credentials.js", "script.js"):
-        html = html.replace(
-            f'src="/static/{script}"',
-            f'src="/static/{script}?v={_static_hashes[script]}"',
-        )
-    return HTMLResponse(content=html)
-
-
-@app.get("/config", include_in_schema=False)
-async def get_config():
-    settings = get_settings()
-    return {"api_url": settings.API_URL}
+    """The only page is the interactive documentation."""
+    return RedirectResponse("/docs")
 
 
 @app.get("/health", tags=["Health"])
