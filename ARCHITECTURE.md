@@ -217,8 +217,10 @@ permitia revogar um consumidor sem derrubar todos nem saber quem chamou o quê.
 - `last_used_at` registra o uso, para auditoria e detecção de chaves esquecidas
 - Pode ter um **dono** (`user_id`). As permissões da chave precisam estar entre as do
   dono na criação, e a cada request valem só as que o dono tem gravadas, que seguem o
-  authentik a cada chamada do dono. Uma conta desativada no authentik não chama mais,
-  então as chaves dela ficam com as últimas permissões até serem revogadas. O `Principal`
+  authentik a cada chamada do dono. Quando o authentik desativa uma conta, o trem.AUTH
+  avisa (`POST /internal/authentik/accounts`, com `AUTHENTIK_WEBHOOK_SECRET`): as
+  permissões gravadas somem e as chaves param na hora; reativada, elas voltam a seguir os
+  grupos. Conta apagada não traz o username no evento do authentik: desativar antes. O `Principal`
   carrega o `user_id`, que é a quem pertencem os recursos pessoais (jobs de
   scraping), para sobreviverem à rotação da chave. Sem dono é chave de serviço
 

@@ -11,6 +11,7 @@ from fastapi.responses import RedirectResponse
 from app.api.middleware.body_size_limit import BodySizeLimitMiddleware
 from app.api.v1.routers import admin as admin_router
 from app.api.v1.routers import api_clients as api_clients_router
+from app.api.v1.routers import authentik_events as authentik_events_router
 from app.api.v1.routers import hub as hub_router
 from app.api.v1.routers import me as me_router
 from app.core.config import get_settings
@@ -88,6 +89,7 @@ app.include_router(hub_router.router)
 app.include_router(hub_router.admin_router)
 app.include_router(api_clients_router.router)
 app.include_router(admin_router.router)
+app.include_router(authentik_events_router.router)
 
 # --- Routers de processamento de arquivos (mantidos) ---
 app.include_router(pdfRoute.router, prefix="/pdf", tags=["PDF"])
