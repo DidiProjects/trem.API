@@ -1,32 +1,26 @@
 """
 Testes de app/api/v1/dependencies.py — o portão de autorização da API.
 
-Aqui os tokens são reais (assinados com a chave RSA de teste) e o repositório
-é mockado: é o ponto onde token, estado da conta e perfil se cruzam.
+Os tokens são assinados pela chave de teste que a suíte faz passar pelo authentik
+(tests/authentik_tokens.py); as contas vão para o SQLite da suíte.
 """
-from unittest.mock import AsyncMock, MagicMock, patch
-
 import pytest
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
-from app.api.v1.dependencies import (
-    get_current_active_user,
-    get_current_user,
-    require_permission,
-)
+from app.api.v1.dependencies import get_current_user, require_permission
 from app.domain.entities.api_client import Principal
-from app.core.security import create_access_token, generate_refresh_token
 from app.domain.entities.permission import TremPermission
-from app.domain.entities.user import User, UserStatus
+from app.domain.entities.user import User
 from app.infrastructure.database.connection import get_db
-from tests.conftest import make_mock_user, mock_get_db
+from tests.authentik_tokens import authentik_token
 
-USER_ID = "00000000-0000-0000-0000-000000000001"
+EDITOR = TremPermission.FILE_EDITOR.value
+AIRLINE = TremPermission.AIRLINE_COMPANY.value
 
 
 @pytest.fixture
-def probe_app():
+def probe(db_session, seeded_permissions, authentik_login):
     """App mínima que expõe cada dependência numa rota, para exercitá-las via HTTP."""
     api = FastAPI()
 
@@ -34,168 +28,63 @@ def probe_app():
     async def me(user: User = Depends(get_current_user)):
         return {"username": user.username}
 
-    @api.get("/active")
-    async def active(user: User = Depends(get_current_active_user)):
-        return {"username": user.username}
-
     # require_permission devolve um Principal (usuário OU cliente de API),
     # por isso a identidade aqui é display_name e não username.
     @api.get("/editor")
-    async def editor(principal: Principal = Depends(require_permission("trem:file_editor"))):
+    async def editor(principal: Principal = Depends(require_permission(EDITOR))):
         return {"username": principal.display_name}
 
     @api.get("/airline")
-    async def airline(principal: Principal = Depends(require_permission("trem:airline_company"))):
+    async def airline(principal: Principal = Depends(require_permission(AIRLINE))):
         return {"username": principal.display_name}
 
-    api.dependency_overrides[get_db] = mock_get_db
-    return api
+    async def _db():
+        yield db_session
+
+    api.dependency_overrides[get_db] = _db
+    return TestClient(api)
 
 
-@pytest.fixture
-def repo():
-    mock = MagicMock()
-    mock.get_by_id = AsyncMock(return_value=make_mock_user())
-    return mock
-
-
-@pytest.fixture
-def probe(probe_app, repo):
-    with patch("app.api.v1.dependencies.UserRepository", return_value=repo):
-        yield TestClient(probe_app)
-
-
-def _bearer(user_id=USER_ID, permissions=(TremPermission.FILE_EDITOR.value,), must_change=False):
-    token = create_access_token(user_id, "testuser", list(permissions), must_change)
-    return {"Authorization": f"Bearer {token}"}
+def _bearer(*groups):
+    return {"Authorization": f"Bearer {authentik_token('ana', groups=groups)}"}
 
 
 class TestGetCurrentUser:
-    def test_valid_token_resolves_user(self, probe, repo):
-        response = probe.get("/me", headers=_bearer())
-        assert response.status_code == 200
-        assert response.json()["username"] == "testuser"
-
-    def test_looks_user_up_by_token_subject(self, probe, repo):
-        probe.get("/me", headers=_bearer(user_id="abc-123"))
-        repo.get_by_id.assert_awaited_once_with("abc-123")
+    def test_valid_token_resolves_user(self, probe):
+        assert probe.get("/me", headers=_bearer()).json() == {"username": "ana"}
 
     def test_missing_header_returns_401(self, probe):
         assert probe.get("/me").status_code == 401
 
     def test_malformed_token_returns_401(self, probe):
-        response = probe.get("/me", headers={"Authorization": "Bearer nao-e-jwt"})
-        assert response.status_code == 401
+        assert probe.get("/me", headers={"Authorization": "Bearer not-a-jwt"}).status_code == 401
 
     def test_wrong_scheme_returns_401(self, probe):
-        response = probe.get("/me", headers={"Authorization": "Basic dXNlcjpwYXNz"})
-        assert response.status_code == 401
-
-    def test_expired_token_returns_401(self, probe):
-        from app.core.config import Settings, get_settings
-
-        data = get_settings().model_dump()
-        data["ACCESS_TOKEN_EXPIRE_MINUTES"] = -5
-        with patch("app.core.security.get_settings", return_value=Settings(**data)):
-            expired = create_access_token(USER_ID, "testuser", ["trem:file_editor"], False)
-
-        response = probe.get("/me", headers={"Authorization": f"Bearer {expired}"})
-        assert response.status_code == 401
-        assert "expirado" in response.json()["detail"].lower()
-
-    def test_refresh_token_is_rejected(self, probe):
-        """Um refresh token não pode servir de credencial de acesso."""
-        raw = generate_refresh_token()
-        response = probe.get("/me", headers={"Authorization": f"Bearer {raw}"})
-        assert response.status_code == 401
-
-    def test_token_for_another_application_is_rejected(self, probe):
-        """Um token emitido para outra interface não abre esta API."""
-        token = create_access_token(USER_ID, "testuser", ["financas:read"], False, audience="financas")
-        response = probe.get("/me", headers={"Authorization": f"Bearer {token}"})
-        assert response.status_code == 401
-
-    def test_deleted_user_returns_401(self, probe, repo):
-        repo.get_by_id.return_value = None
-        assert probe.get("/me", headers=_bearer()).status_code == 401
-
-    def test_blocked_user_returns_403(self, probe, repo):
-        repo.get_by_id.return_value = make_mock_user(status=UserStatus.BLOCKED.value)
-        assert probe.get("/me", headers=_bearer()).status_code == 403
-
-    def test_suspended_user_returns_403(self, probe, repo):
-        repo.get_by_id.return_value = make_mock_user(status=UserStatus.SUSPENDED.value)
-        assert probe.get("/me", headers=_bearer()).status_code == 403
-
-    def test_status_comes_from_database_not_token(self, probe, repo):
-        """
-        O token é emitido antes do bloqueio; quem manda é o estado atual no banco.
-        """
-        repo.get_by_id.return_value = make_mock_user(status=UserStatus.BLOCKED.value)
-        assert probe.get("/me", headers=_bearer()).status_code == 403
+        assert probe.get("/me", headers={"Authorization": f"Basic {authentik_token()}"}).status_code == 401
 
 
-class TestGetCurrentActiveUser:
-    def test_allows_user_without_pending_change(self, probe, repo):
-        repo.get_by_id.return_value = make_mock_user(must_change_password=False)
-        assert probe.get("/active", headers=_bearer()).status_code == 200
+class TestRequirePermission:
+    def test_matching_group_is_allowed(self, probe):
+        assert probe.get("/editor", headers=_bearer(EDITOR)).status_code == 200
 
-    def test_blocks_user_with_pending_change(self, probe, repo):
-        repo.get_by_id.return_value = make_mock_user(must_change_password=True)
-        response = probe.get("/active", headers=_bearer())
-        assert response.status_code == 403
-        assert "change-password" in response.json()["detail"]
-
-    def test_pending_change_comes_from_database_not_token(self, probe, repo):
-        repo.get_by_id.return_value = make_mock_user(must_change_password=True)
-        response = probe.get("/active", headers=_bearer(must_change=False))
-        assert response.status_code == 403
-
-
-class TestRequireProfile:
-    def test_matching_profile_is_allowed(self, probe, repo):
-        repo.get_by_id.return_value = make_mock_user((TremPermission.FILE_EDITOR.value,))
-        assert probe.get("/editor", headers=_bearer()).status_code == 200
-
-    def test_wrong_profile_returns_403(self, probe, repo):
-        repo.get_by_id.return_value = make_mock_user((TremPermission.AIRLINE_COMPANY.value,))
-        response = probe.get("/editor", headers=_bearer())
+    def test_wrong_group_returns_403(self, probe):
+        response = probe.get("/editor", headers=_bearer(AIRLINE))
         assert response.status_code == 403
         assert "Permissão insuficiente" in response.json()["detail"]
 
-    def test_airline_profile_reaches_airline_route(self, probe, repo):
-        repo.get_by_id.return_value = make_mock_user((TremPermission.AIRLINE_COMPANY.value,))
-        assert probe.get("/airline", headers=_bearer()).status_code == 200
+    def test_one_of_several_groups_is_enough(self, probe):
+        headers = _bearer(AIRLINE, EDITOR)
+        assert probe.get("/editor", headers=headers).status_code == 200
+        assert probe.get("/airline", headers=headers).status_code == 200
 
-    def test_profile_comes_from_database_not_token(self, probe, repo):
-        """Token forjado com profile elevado não vale — o perfil vem do banco."""
-        repo.get_by_id.return_value = make_mock_user((TremPermission.AIRLINE_COMPANY.value,))
-        response = probe.get(
-            "/editor", headers=_bearer(permissions=(TremPermission.FILE_EDITOR.value,))
-        )
-        assert response.status_code == 403
-
-    def test_one_of_several_profiles_is_enough(self, probe, repo):
-        repo.get_by_id.return_value = make_mock_user(
-            (TremPermission.AIRLINE_COMPANY.value, TremPermission.FILE_EDITOR.value)
-        )
-        assert probe.get("/editor", headers=_bearer()).status_code == 200
-        assert probe.get("/airline", headers=_bearer()).status_code == 200
-
-    def test_user_without_profiles_is_403(self, probe, repo):
-        repo.get_by_id.return_value = make_mock_user(())
+    def test_account_without_groups_is_403(self, probe):
         assert probe.get("/editor", headers=_bearer()).status_code == 403
 
-    def test_pending_password_change_blocks_profile_routes(self, probe, repo):
-        repo.get_by_id.return_value = make_mock_user(must_change_password=True)
-        assert probe.get("/editor", headers=_bearer()).status_code == 403
-
-    def test_blocked_user_cannot_reach_profile_routes(self, probe, repo):
-        repo.get_by_id.return_value = make_mock_user(status=UserStatus.BLOCKED.value)
-        assert probe.get("/editor", headers=_bearer()).status_code == 403
+    def test_no_credential_is_401(self, probe):
+        assert probe.get("/editor").status_code == 401
 
     def test_returns_a_callable_dependency(self):
-        assert callable(require_permission("trem:file_editor"))
+        assert callable(require_permission(EDITOR))
 
     def test_each_call_builds_an_independent_dependency(self):
-        assert require_permission("trem:file_editor") is not require_permission("trem:file_editor")
+        assert require_permission(EDITOR) is not require_permission(EDITOR)

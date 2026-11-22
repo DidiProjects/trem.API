@@ -5,13 +5,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import TokenInvalidError
-from app.domain.entities.user import User, UserStatus
+from app.domain.entities.user import User
 from app.repositories.permission_repository import PermissionRepository
 from app.repositories.user_repository import UserRepository
-
-# Not an argon2 hash, so verify_password() never accepts anything: the password of an account
-# that logs in through authentik lives only in authentik.
-NO_LOCAL_PASSWORD = "!authentik"
 
 # authentik groups named like trem.API permissions (trem:admin, hub:didiflix); the others
 # ("authentik Admins") mean nothing here.
@@ -45,7 +41,6 @@ class AuthentikUserService:
         if amr & {"mfa", "otp"}:
             amr.add("otp")
         user.amr = tuple(sorted(amr))
-        user.must_change_password = False
         return user
 
     async def _store(self, user_id, stored: set[str], wanted: list[str]) -> None:
@@ -67,14 +62,7 @@ class AuthentikUserService:
         try:
             # Savepoint: two first calls at once both try to create; the loser reads the winner.
             async with self._session.begin_nested():
-                return await self._users.create(
-                    username=username,
-                    password_hash=NO_LOCAL_PASSWORD,
-                    permission_ids=[],
-                    email=email,
-                    status=UserStatus.ACTIVE.value,
-                    must_change_password=False,
-                )
+                return await self._users.create(username=username, email=email)
         except IntegrityError:
             user = await self._users.get_by_username(username)
             if user is None:

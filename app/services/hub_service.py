@@ -3,12 +3,11 @@ from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import ConflictError, InvalidLogoError, NotFoundError, UserNotFoundError
+from app.core.exceptions import ConflictError, InvalidLogoError, NotFoundError
 from app.domain.entities.user import User
 from app.infrastructure.database.models import HubServiceModel
 from app.repositories.hub_repository import HUB_APP, HubRepository
 from app.repositories.permission_repository import PermissionRepository
-from app.repositories.user_repository import UserRepository
 
 LOGO_MAX_BYTES = 256 * 1024
 
@@ -40,13 +39,13 @@ def logo_type(data: bytes) -> str:
 
 
 class HubService:
-    """The catalog of self-hosted services shown by trem.FRONT, and who sees each one."""
+    """The catalog of self-hosted services shown by trem.FRONT; who sees each one is the
+    authentik group hub:<slug>."""
 
     def __init__(self, session: AsyncSession):
         self._session = session
         self._services = HubRepository(session)
         self._permissions = PermissionRepository(session)
-        self._users = UserRepository(session)
 
     async def catalog(self, user: User) -> list[HubServiceModel]:
         granted = set(user.permissions)
@@ -126,20 +125,3 @@ class HubService:
         service.logo = service.logo_type = service.logo_version = None
         await self._services.save()
         return service
-
-    async def grant(self, admin: User, slug: str, user_id: str) -> None:
-        """No session ends: trem.FRONT reads the catalog from the database on each visit."""
-        service = await self.get(slug)
-        await self._user(user_id)
-        await self._users.add_permission(user_id, service.permission_id, granted_by=admin.id)
-
-    async def revoke(self, slug: str, user_id: str) -> None:
-        service = await self.get(slug)
-        await self._user(user_id)
-        await self._users.remove_permission(user_id, service.permission_id)
-
-    async def _user(self, user_id: str) -> User:
-        user = await self._users.get_by_id(user_id)
-        if not user:
-            raise UserNotFoundError()
-        return user

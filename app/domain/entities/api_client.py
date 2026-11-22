@@ -49,7 +49,7 @@ class ApiClient:
 @dataclass
 class Principal:
     """
-    Identidade normalizada de quem chamou, seja usuário (JWT) ou cliente
+    Identidade normalizada de quem chamou, seja usuário (token do authentik) ou cliente
     (API key). É o que `require_permission` inspeciona, para que as rotas não
     precisem saber qual das duas autenticações foi usada.
     """
@@ -58,11 +58,9 @@ class Principal:
     display_name: str
     permissions: frozenset[str]
     kind: PrincipalKind
-    # Só se aplica a usuários; cliente nunca tem senha para trocar.
-    must_change_password: bool = False
     # A pessoa por trás da chamada: o próprio usuário, ou o dono da chave.
     # Recursos pessoais (jobs de scraping) pertencem a ela, não à chave, para
-    # sobreviverem à rotação da chave e aparecerem também no login por JWT.
+    # sobreviverem à rotação da chave e aparecerem também no login pelo authentik.
     user_id: Optional[str] = None
 
     @property
@@ -83,7 +81,6 @@ class Principal:
             display_name=user.username,
             permissions=frozenset(user.permissions),
             kind=PrincipalKind.USER,
-            must_change_password=user.must_change_password,
             user_id=user.id,
         )
 
@@ -94,6 +91,5 @@ class Principal:
             display_name=client.name,
             permissions=frozenset(client.permissions),
             kind=PrincipalKind.CLIENT,
-            must_change_password=False,
             user_id=client.user_id,
         )

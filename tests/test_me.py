@@ -1,39 +1,27 @@
 """
-/me e as API keys do próprio usuário, contra o SQLite da suíte, com login real.
+/me e as API keys do próprio usuário, contra o SQLite da suíte, com token do authentik.
 """
 import uuid
-from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from app.core.security import hash_password
 from app.infrastructure.database.connection import get_db
-from app.infrastructure.database.models import ApiClientModel, ApplicationModel, PermissionModel, UserModel
+from app.infrastructure.database.models import ApiClientModel, ApplicationModel, PermissionModel
 from app.main import app
 from app.services.api_client_service import hash_api_key
-from app.services.login_throttle import LoginThrottle
+from tests.authentik_tokens import authentik_token
 
-PASSWORD = "cavalo bateria grampo"
-PASSWORD_HASH = hash_password(PASSWORD)
+GROUPS = {
+    "ana": ["trem:ai", "trem:file_editor", "trem:admin", "financas:read"],
+    "bia": ["trem:ai"],
+}
 
 
 @pytest.fixture
-async def http(db_session, seeded_permissions):
-    async def grant(*keys):
-        return [await db_session.get(PermissionModel, uuid.UUID(seeded_permissions[k])) for k in keys]
-
-    financas = PermissionModel(application=ApplicationModel(slug="financas", name="F"), name="read")
-    db_session.add_all([
-        UserModel(username="ana", email="ana@example.com", password_hash=PASSWORD_HASH, status="active",
-                  must_change_password=False,
-                  permissions=await grant("trem:ai", "trem:file_editor", "trem:admin") + [financas]),
-        UserModel(username="bia", email="bia@example.com", password_hash=PASSWORD_HASH, status="active",
-                  must_change_password=False, permissions=await grant("trem:ai")),
-        UserModel(username="nova", email="nova@example.com", password_hash=PASSWORD_HASH, status="active",
-                  must_change_password=True, permissions=await grant("trem:ai")),
-    ])
+async def http(db_session, seeded_permissions, authentik_login):
+    db_session.add(PermissionModel(application=ApplicationModel(slug="financas", name="F"), name="read"))
     await db_session.commit()
 
     async def _db():
@@ -41,15 +29,12 @@ async def http(db_session, seeded_permissions):
         await db_session.commit()
 
     app.dependency_overrides[get_db] = _db
-    throttle = LoginThrottle(per_username=50, per_ip=50, window_seconds=60)
-    with patch("app.services.auth_service.get_login_throttle", return_value=throttle):
-        yield TestClient(app, base_url="https://testserver")
+    yield TestClient(app, base_url="https://testserver")
     app.dependency_overrides.clear()
 
 
 def _auth(http, username="ana"):
-    token = http.post("/auth/login", json={"username": username, "password": PASSWORD}).json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}
+    return {"Authorization": f"Bearer {authentik_token(username, groups=GROUPS[username])}"}
 
 
 class TestMe:
@@ -57,13 +42,8 @@ class TestMe:
         body = http.get("/me", headers=_auth(http)).json()
         assert body["username"] == "ana"
         assert "financas:read" in body["permissions"]
-        assert body["totp_enabled"] is False
         assert (body["api_keys_active"], body["api_keys_limit"]) == (0, 5)
         assert "password_hash" not in body
-
-    def test_works_before_the_first_password_change(self, http):
-        body = http.get("/me", headers=_auth(http, "nova")).json()
-        assert body["must_change_password"] is True
 
     def test_requires_a_login(self, http):
         assert http.get("/me").status_code == 401
@@ -140,9 +120,6 @@ class TestOwnKeys:
         key = http.post("/me/api-keys", json={"name": "notebook"}, headers=_auth(http)).json()["api_key"]
         assert http.post("/me/api-keys", json={"name": "outra"}, headers={"X-API-Key": key}).status_code == 401
         assert http.get("/me", headers={"X-API-Key": key}).status_code == 401
-
-    def test_pending_password_change_blocks_key_management(self, http):
-        assert http.post("/me/api-keys", json={"name": "x1"}, headers=_auth(http, "nova")).status_code == 403
 
     @pytest.mark.parametrize("name", ["", "com espaço", "x" * 51])
     def test_invalid_name_is_422(self, http, name):

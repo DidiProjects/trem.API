@@ -8,38 +8,11 @@ from unittest.mock import MagicMock
 # Configuração de ambiente de teste
 #
 # Precisa acontecer ANTES de qualquer import de app.*, porque get_settings() é
-# lru_cache: a primeira chamada congela os valores. Gerar o par RSA aqui deixa
-# os testes de JWT independentes do .env real da máquina.
+# lru_cache: a primeira chamada congela os valores.
 # ---------------------------------------------------------------------------
-
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
-
-_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-TEST_PRIVATE_KEY = _key.private_bytes(
-    encoding=serialization.Encoding.PEM,
-    format=serialization.PrivateFormat.PKCS8,
-    encryption_algorithm=serialization.NoEncryption(),
-).decode()
-TEST_PUBLIC_KEY = (
-    _key.public_key()
-    .public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo,
-    )
-    .decode()
-)
-
-TEST_API_KEY = "test-api-key-do-not-use-in-prod"
 
 os.environ.update(
     {
-        "JWT_PRIVATE_KEY": TEST_PRIVATE_KEY,
-        "JWT_PUBLIC_KEY": TEST_PUBLIC_KEY,
-        "JWT_ALGORITHM": "RS256",
-        "ACCESS_TOKEN_EXPIRE_MINUTES": "15",
-        "REFRESH_TOKEN_EXPIRE_DAYS": "7",
-        "API_KEY": TEST_API_KEY,
         "API_URL": "http://testserver",
         "DATABASE_URL": "postgresql+asyncpg://test:test@localhost:5432/test",
         "DEBUG": "False",
@@ -49,8 +22,6 @@ os.environ.update(
         "EMAIL_RECIPIENT": "",
         "AIRLINE_API_URL": "",
         "AIRLINE_API_KEY": "",
-        # Tests never reach Have I Been Pwned; test_breached_password turns it on with a fake transport.
-        "PWNED_PASSWORDS_ENABLED": "False",
         # The CORS middleware is installed at import; test_cors checks it with this origin.
         "CORS_ORIGINS": "https://front.example, http://localhost:3004/",
     }
@@ -78,7 +49,7 @@ from app.api.v1.dependencies import (  # noqa: E402
     get_current_user,
 )
 from app.domain.entities.permission import TREM_APP, TremPermission  # noqa: E402
-from app.domain.entities.user import User, UserStatus  # noqa: E402
+from app.domain.entities.user import User  # noqa: E402
 from app.infrastructure.database.connection import get_db  # noqa: E402
 from app.infrastructure.database.models import (  # noqa: E402
     ApplicationModel,
@@ -153,7 +124,7 @@ async def seeded_permissions(db_session):
 
 @pytest.fixture
 async def persisted_user(db_session, seeded_permissions):
-    """Um usuário ativo já gravado no SQLite, com a permissão trem:file_editor."""
+    """Um usuário já gravado no SQLite, com a permissão trem:file_editor."""
     file_editor = await db_session.get(
         PermissionModel, uuid.UUID(seeded_permissions[TremPermission.FILE_EDITOR])
     )
@@ -161,10 +132,7 @@ async def persisted_user(db_session, seeded_permissions):
         id=uuid.uuid4(),
         username="persisted",
         email="persisted@example.com",
-        password_hash="$argon2id$placeholder",
         permissions=[file_editor],
-        status=UserStatus.ACTIVE.value,
-        must_change_password=False,
     )
     db_session.add(orm)
     await db_session.flush()
@@ -175,32 +143,19 @@ async def persisted_user(db_session, seeded_permissions):
 # Usuários mock
 # ---------------------------------------------------------------------------
 
-def make_mock_user(
-    permissions: tuple[str, ...] = (TremPermission.FILE_EDITOR.value,),
-    must_change_password: bool = False,
-    status: str = UserStatus.ACTIVE.value,
-) -> User:
+def make_mock_user(permissions: tuple[str, ...] = (TremPermission.FILE_EDITOR.value,)) -> User:
     return User(
         id="00000000-0000-0000-0000-000000000001",
         username="testuser",
         email="test@example.com",
-        password_hash="$argon2id$placeholder",
         permissions=list(permissions),
-        status=status,
-        must_change_password=must_change_password,
-        provisional_password_sent_at=None,
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
-        last_login_at=None,
     )
 
 
 async def _user_file_editor():
     return make_mock_user((TremPermission.FILE_EDITOR.value,))
-
-
-async def _user_must_change():
-    return make_mock_user((TremPermission.FILE_EDITOR.value,), must_change_password=True)
 
 
 async def _user_airline():
@@ -218,7 +173,7 @@ async def _user_ai():
 def _authenticated_as(user_factory):
     """
     Monta um TestClient autenticado substituindo apenas a *resolução* do
-    usuário. As regras de permissão e de senha pendente continuam sendo aplicadas
+    usuário. As regras de permissão continuam sendo aplicadas
     pelo get_current_principal real — é o que mantém os testes de 403
     verificando a aplicação, e não o fixture.
     """
@@ -229,16 +184,23 @@ def _authenticated_as(user_factory):
 
 
 @pytest.fixture
-def client():
-    """Client autenticado como file_editor (para testes de routers de arquivo)."""
-    yield _authenticated_as(_user_file_editor)
-    app.dependency_overrides.clear()
+def authentik_login(monkeypatch):
+    """trem.API trusts tests/authentik_tokens.py as if it were authentik."""
+    from app.core import authentik
+    from tests.authentik_tokens import ISSUER, FakeJwks
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "AUTHENTIK_ISSUER", ISSUER)
+    monkeypatch.setattr(settings, "AUTHENTIK_AUDIENCE", "trem")
+    jwks = FakeJwks()
+    monkeypatch.setattr(authentik, "_jwks_client", lambda _url: jwks)
+    return jwks
 
 
 @pytest.fixture
-def client_must_change():
-    """Client autenticado, mas com must_change_password=True."""
-    yield _authenticated_as(_user_must_change)
+def client():
+    """Client autenticado como file_editor (para testes de routers de arquivo)."""
+    yield _authenticated_as(_user_file_editor)
     app.dependency_overrides.clear()
 
 

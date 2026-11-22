@@ -120,10 +120,11 @@ class ApiClientService:
             return None
 
         if client.user_id is not None:
-            # Revalidado a cada request: bloquear o dono ou tirar uma permissão
-            # dele vale na hora para as chaves dele, sem revogar uma a uma.
+            # Revalidated on every request against the owner's stored permissions,
+            # which follow authentik at the owner's last call. An account disabled in
+            # authentik makes no more calls, so its keys keep the last set until revoked.
             owner = await self._users.get_by_id(client.user_id)
-            if not owner or not owner.is_active:
+            if not owner:
                 return None
             client.permissions = sorted(set(client.permissions) & set(owner.permissions))
 

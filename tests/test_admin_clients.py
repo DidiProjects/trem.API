@@ -14,20 +14,15 @@ from app.infrastructure.database.connection import get_db
 from app.infrastructure.database.models import ApplicationModel, Base, PermissionModel, UserModel
 from app.domain.entities.permission import TremPermission
 from app.main import app
-from app.core.security import create_access_token
+from tests.authentik_tokens import admin_token
 
 # The admin credential travels as the client's default Authorization header (see `http`).
 MASTER: dict = {}
 
 
 @pytest.fixture
-async def http(db_session, seeded_permissions):
-    admin_permission = await db_session.get(PermissionModel, uuid.UUID(seeded_permissions["trem:admin"]))
-    admin = UserModel(username="chefe", password_hash="x", status="active",
-                      must_change_password=False, permissions=[admin_permission])
-    db_session.add(admin)
-    await db_session.flush()
-    token = create_access_token(str(admin.id), "chefe", ["trem:admin"], False, amr=("pwd", "otp"))
+async def http(db_session, seeded_permissions, authentik_login):
+    token = admin_token()
 
     async def _db():
         yield db_session
@@ -37,15 +32,9 @@ async def http(db_session, seeded_permissions):
     app.dependency_overrides.clear()
 
 
-async def _owner(db_session, seeded_permissions, *names, status="active"):
+async def _owner(db_session, seeded_permissions, *names):
     profiles = [await db_session.get(PermissionModel, uuid.UUID(seeded_permissions[n])) for n in names]
-    orm = UserModel(
-        username=f"owner-{uuid.uuid4().hex[:6]}",
-        password_hash="x",
-        permissions=profiles,
-        status=status,
-        must_change_password=False,
-    )
+    orm = UserModel(username=f"owner-{uuid.uuid4().hex[:6]}", permissions=profiles)
     db_session.add(orm)
     await db_session.flush()
     return str(orm.id)
@@ -109,16 +98,6 @@ class TestCreate:
         body = {"name": "x", "permissions": ["trem:ai"]}
         assert http.post("/admin/clients", json=body, headers={"Authorization": ""}).status_code == 401
 
-    def test_master_key_no_longer_administers(self, http):
-        from tests.conftest import TEST_API_KEY
-
-        response = http.post(
-            "/admin/clients",
-            json={"name": "x", "permissions": ["trem:ai"]},
-            headers={"Authorization": "", "X-API-Key": TEST_API_KEY},
-        )
-        assert response.status_code == 401
-
     def test_issued_key_cannot_administer(self, http):
         issued = http.post(
             "/admin/clients", headers=MASTER, json={"name": "app", "permissions": ["trem:ai"]}
@@ -164,13 +143,12 @@ class TestIssuedKeyEndToEnd:
         key = self._key(http, ["trem:file_editor", "trem:linkedin_scraper"])
         assert http.get("/llm/health", headers={"X-API-Key": key}).status_code == 403
 
-    async def test_suspending_owner_turns_key_into_401(self, http, db_session, seeded_permissions):
+    async def test_deleting_the_owner_turns_key_into_401(self, http, db_session, seeded_permissions):
         owner = await _owner(db_session, seeded_permissions, "trem:ai")
         key = self._key(http, ["trem:ai"], user_id=owner)
         assert http.get("/llm/health", headers={"X-API-Key": key}).status_code == 503
 
-        user = await db_session.get(UserModel, uuid.UUID(owner))
-        user.status = "suspended"
+        await db_session.delete(await db_session.get(UserModel, uuid.UUID(owner)))
         await db_session.flush()
 
         assert http.get("/llm/health", headers={"X-API-Key": key}).status_code == 401
@@ -212,7 +190,7 @@ class TestCli:
                 }
                 session.add_all(profiles.values())
                 session.add(UserModel(
-                    username="diego", password_hash="x", status="active",
+                    username="diego",
                     permissions=[profiles["trem:ai"], profiles["trem:linkedin_scraper"]],
                 ))
                 await session.commit()
