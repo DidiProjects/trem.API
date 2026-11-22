@@ -104,10 +104,6 @@ class MeResponse(BaseModel):
     id: str
     username: str
     email: Optional[str]
-    status: str
     permissions: list[str]
-    must_change_password: bool
-    totp_enabled: bool
-    recovery_codes_left: int
     api_keys_active: int
     api_keys_limit: int

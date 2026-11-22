@@ -14,18 +14,6 @@ class AuthentikUnavailableError(AppException):
         super().__init__("Servidor de login indisponível. Tente de novo em instantes.", status_code=503)
 
 
-def is_authentik_token(token: str) -> bool:
-    """Routing only, before any check: the issuer claim says which validation applies."""
-    issuer = get_settings().AUTHENTIK_ISSUER
-    if not issuer:
-        return False
-    try:
-        claims = jwt.decode(token, options={"verify_signature": False})
-    except PyJWTError:
-        return False
-    return claims.get("iss") == issuer
-
-
 @lru_cache
 def _jwks_client(url: str) -> PyJWKClient:
     # Keys are cached for an hour; an unknown `kid` (authentik rotated) refetches once.
@@ -35,6 +23,9 @@ def _jwks_client(url: str) -> PyJWKClient:
 
 def _decode(token: str) -> dict:
     settings = get_settings()
+    if not settings.AUTHENTIK_ISSUER:
+        # Without the issuer nobody can log in; keys (X-API-Key) still work.
+        raise PyJWTError("AUTHENTIK_ISSUER is not set")
     key = _jwks_client(f"{settings.AUTHENTIK_ISSUER}jwks/").get_signing_key_from_jwt(token)
     return jwt.decode(
         token,

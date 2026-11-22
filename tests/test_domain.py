@@ -13,43 +13,17 @@ from app.core.exceptions import (
     AppException,
     EmailSendError,
     InsufficientPermissionsError,
-    InvalidCredentialsError,
-    PasswordChangeRequiredError,
     TokenExpiredError,
     TokenInvalidError,
-    UserAlreadyExistsError,
-    UserBlockedError,
-    UserNotFoundError,
 )
 from app.domain.entities.permission import Permission, TremPermission, split_permission_key
-from app.domain.entities.user import UserStatus
-from app.domain.schemas.auth import (
-    ChangePasswordRequest,
-    LoginRequest,
-    RefreshRequest,
-    TokenResponse,
-)
 from app.domain.schemas.common import ErrorResponse, MessageResponse, PaginatedResponse
-from app.domain.schemas.user import UserCreate, UserResponse
 from tests.conftest import make_mock_user
 
 
 # ---------------------------------------------------------------------------
 # Enums e entidades
 # ---------------------------------------------------------------------------
-
-class TestUserStatusEnum:
-    def test_compares_equal_to_plain_string(self):
-        """StrEnum: código antigo que compara com string precisa continuar valendo."""
-        assert UserStatus.ACTIVE == "active"
-        assert UserStatus.BLOCKED == "blocked"
-        assert UserStatus.SUSPENDED == "suspended"
-
-    def test_states(self):
-        assert {s.value for s in UserStatus} == {
-            "active", "blocked", "suspended", "pending_verification", "pending_approval", "rejected",
-        }
-
 
 class TestTremPermissionEnum:
     def test_compares_equal_to_plain_string(self):
@@ -77,38 +51,15 @@ class TestPermissionKey:
 
 
 class TestUserEntity:
-    def test_active_user_flags(self):
-        user = make_mock_user(status=UserStatus.ACTIVE.value)
-        assert user.is_active is True
-        assert user.is_blocked is False
-        assert user.is_suspended is False
-        assert user.can_authenticate is True
-
-    def test_blocked_user_flags(self):
-        user = make_mock_user(status=UserStatus.BLOCKED.value)
-        assert user.is_blocked is True
-        assert user.is_active is False
-        assert user.can_authenticate is False
-
-    def test_suspended_user_flags(self):
-        user = make_mock_user(status=UserStatus.SUSPENDED.value)
-        assert user.is_suspended is True
-        assert user.is_active is False
-        assert user.can_authenticate is False
-
     def test_has_permission(self):
         user = make_mock_user((TremPermission.FILE_EDITOR.value, TremPermission.AI.value))
         assert user.has_permission("trem:file_editor") is True
         assert user.has_permission("trem:ai") is True
         assert user.has_permission("trem:airline_company") is False
 
-    def test_repr_hides_password_hash(self):
-        assert "$argon2id$" not in repr(make_mock_user())
-
-    def test_repr_shows_identity(self):
-        text = repr(make_mock_user())
-        assert "testuser" in text
-        assert "trem:file_editor" in text
+    def test_is_admin_follows_trem_admin(self):
+        assert make_mock_user(("trem:admin",)).is_admin is True
+        assert make_mock_user().is_admin is False
 
 
 class TestPermissionEntity:
@@ -118,186 +69,6 @@ class TestPermissionEntity:
             created_at=datetime.now(timezone.utc),
         )
         assert permission.key == "trem:file_editor"
-
-
-# ---------------------------------------------------------------------------
-# Schemas de autenticação
-# ---------------------------------------------------------------------------
-
-class TestLoginRequest:
-    def test_valid_payload(self):
-        body = LoginRequest(username="joao", password="Senha@123")
-        assert body.username == "joao"
-
-    def test_strips_surrounding_whitespace(self):
-        assert LoginRequest(username="  joao  ", password="Senha@123").username == "joao"
-
-    @pytest.mark.parametrize("username", ["", "   "])
-    def test_rejects_blank_username(self, username):
-        with pytest.raises(ValidationError):
-            LoginRequest(username=username, password="Senha@123")
-
-    @pytest.mark.parametrize("password", ["", "   "])
-    def test_rejects_blank_password(self, password):
-        with pytest.raises(ValidationError):
-            LoginRequest(username="joao", password=password)
-
-    def test_rejects_missing_fields(self):
-        with pytest.raises(ValidationError):
-            LoginRequest(username="joao")
-
-    def test_rejects_absurdly_long_password(self):
-        """Limite de tamanho evita DoS no Argon2id."""
-        with pytest.raises(ValidationError):
-            LoginRequest(username="joao", password="x" * 129)
-
-
-class TestChangePasswordRequest:
-    def test_valid_payload(self):
-        body = ChangePasswordRequest(
-            current_password="Antiga@123", new_password="NovaSenha@456"
-        )
-        assert body.new_password == "NovaSenha@456"
-
-    @pytest.mark.parametrize(
-        "senha,motivo",
-        [
-            ("Curta@12345", "menos de 12 caracteres"),
-            ("aaaaaaaaaaaaaaaa", "repete caracteres"),
-            ("x" * 129, "acima do máximo"),
-        ],
-    )
-    def test_rejects_weak_password(self, senha, motivo):
-        with pytest.raises(ValidationError):
-            ChangePasswordRequest(current_password="Antiga@123", new_password=senha)
-
-    def test_accepts_password_at_minimum_length(self):
-        body = ChangePasswordRequest(current_password="Antiga@123", new_password="cavalo verde")
-        assert len(body.new_password) == 12
-
-    def test_composition_is_not_required(self):
-        """NIST 800-63B: comprimento, não maiúscula/dígito obrigatórios."""
-        body = ChangePasswordRequest(current_password="x", new_password="correct horse battery")
-        assert body.new_password == "correct horse battery"
-
-    def test_rejects_new_password_equal_to_current(self):
-        with pytest.raises(ValidationError):
-            ChangePasswordRequest(
-                current_password="MesmaSenha1", new_password="MesmaSenha1"
-            )
-
-    def test_rejects_blank_current_password(self):
-        with pytest.raises(ValidationError):
-            ChangePasswordRequest(current_password="", new_password="NovaSenha@456")
-
-
-class TestRefreshRequest:
-    def test_valid_payload(self):
-        assert RefreshRequest(refresh_token="abc.def.ghi").refresh_token == "abc.def.ghi"
-
-    def test_rejects_blank_token(self):
-        with pytest.raises(ValidationError):
-            RefreshRequest(refresh_token="   ")
-
-    def test_token_is_optional_for_the_cookie_session(self):
-        assert RefreshRequest().refresh_token is None
-
-
-class TestTokenResponses:
-    def test_token_response_defaults_to_bearer(self):
-        body = TokenResponse(access_token="a", expires_in=900, must_change_password=False)
-        assert body.token_type == "bearer"
-        assert body.refresh_token is None
-
-
-class TestLoginRequestAudience:
-    def test_defaults_to_trem_and_body_session(self):
-        body = LoginRequest(username="u", password="p")
-        assert (body.audience, body.session) == ("trem", "body")
-
-    @pytest.mark.parametrize("audience", ["", "Trem", "x", "a b", "trem:ai"])
-    def test_rejects_malformed_audience(self, audience):
-        with pytest.raises(ValidationError):
-            LoginRequest(username="u", password="p", audience=audience)
-
-
-# ---------------------------------------------------------------------------
-# Schemas de usuário
-# ---------------------------------------------------------------------------
-
-class TestUserCreate:
-    def test_valid_payload(self):
-        body = UserCreate(
-            username="joao.silva", email="joao@example.com", permissions=["trem:file_editor"]
-        )
-        assert body.username == "joao.silva"
-
-    def test_email_is_optional(self):
-        assert UserCreate(username="joao", permissions=["trem:file_editor"]).email is None
-
-    def test_email_is_lowercased(self):
-        body = UserCreate(
-            username="joao", email="Joao@Example.COM", permissions=["trem:file_editor"]
-        )
-        assert body.email == "joao@example.com"
-
-    @pytest.mark.parametrize("email", ["nao-e-email", "sem@dominio", "@example.com", "a b@c.com"])
-    def test_rejects_invalid_email(self, email):
-        with pytest.raises(ValidationError):
-            UserCreate(username="joao", email=email, permissions=["trem:file_editor"])
-
-    @pytest.mark.parametrize("username", ["ab", "x" * 51])
-    def test_rejects_username_out_of_length_bounds(self, username):
-        with pytest.raises(ValidationError):
-            UserCreate(username=username, permissions=["trem:file_editor"])
-
-    @pytest.mark.parametrize("username", ["joao silva", "joão", "joao@silva", "joao/silva"])
-    def test_rejects_username_with_forbidden_characters(self, username):
-        with pytest.raises(ValidationError):
-            UserCreate(username=username, permissions=["trem:file_editor"])
-
-    @pytest.mark.parametrize("username", ["abc", "joao_silva", "joao.silva", "joao-silva", "user123"])
-    def test_accepts_valid_username_shapes(self, username):
-        assert UserCreate(username=username, permissions=["trem:file_editor"]).username == username
-
-    @pytest.mark.parametrize("key", [p.value for p in TremPermission] + ["financas:read"])
-    def test_accepts_well_formed_keys(self, key):
-        assert UserCreate(username="joao", permissions=[key]).permissions == [key]
-
-    @pytest.mark.parametrize("key", ["ai", "superuser", "", "FILE_EDITOR", "trem:"])
-    def test_rejects_malformed_key(self, key):
-        with pytest.raises(ValidationError):
-            UserCreate(username="joao", permissions=["trem:ai", key])
-
-    def test_requires_at_least_one_permission(self):
-        with pytest.raises(ValidationError):
-            UserCreate(username="joao", permissions=[])
-
-    def test_repeated_permissions_are_collapsed_and_sorted(self):
-        body = UserCreate(username="joao", permissions=["trem:file_editor", "trem:ai", "trem:file_editor"])
-        assert body.permissions == ["trem:ai", "trem:file_editor"]
-
-    @pytest.mark.parametrize("field", ["profile_name", "profile_names"])
-    def test_old_profile_payload_is_not_accepted(self, field):
-        """Old payloads must fail loudly instead of being half-read."""
-        with pytest.raises(ValidationError):
-            UserCreate(username="joao", **{field: ["file_editor"]})
-
-
-class TestUserResponse:
-    def test_builds_from_domain_entity(self):
-        """from_attributes=True permite montar a resposta direto da entidade."""
-        response = UserResponse.model_validate(make_mock_user())
-        assert response.username == "testuser"
-        assert response.status == UserStatus.ACTIVE
-
-    def test_never_exposes_password_hash(self):
-        dumped = UserResponse.model_validate(make_mock_user()).model_dump()
-        assert "password_hash" not in dumped
-
-    def test_serializes_status_as_string(self):
-        dumped = UserResponse.model_validate(make_mock_user()).model_dump(mode="json")
-        assert dumped["status"] == "active"
 
 
 # ---------------------------------------------------------------------------
@@ -338,14 +109,9 @@ class TestExceptions:
     @pytest.mark.parametrize(
         "exc,status",
         [
-            (InvalidCredentialsError(), 401),
             (TokenExpiredError(), 401),
             (TokenInvalidError(), 401),
-            (UserBlockedError(), 403),
-            (PasswordChangeRequiredError(), 403),
             (InsufficientPermissionsError(), 403),
-            (UserNotFoundError(), 404),
-            (UserAlreadyExistsError(), 409),
             (EmailSendError(), 503),
         ],
     )
@@ -353,16 +119,13 @@ class TestExceptions:
         assert exc.status_code == status
 
     def test_all_inherit_app_exception(self):
-        assert isinstance(UserNotFoundError(), AppException)
+        assert isinstance(TokenInvalidError(), AppException)
 
     def test_app_exception_defaults_to_500(self):
         assert AppException("falhou").status_code == 500
-
-    def test_invalid_credentials_accepts_custom_message(self):
-        assert InvalidCredentialsError("Senha atual incorreta").message == "Senha atual incorreta"
 
     def test_email_send_error_appends_detail(self):
         assert "SMTP fora do ar" in EmailSendError("SMTP fora do ar").message
 
     def test_message_is_the_str_representation(self):
-        assert str(UserNotFoundError()) == UserNotFoundError().message
+        assert str(TokenInvalidError()) == TokenInvalidError().message

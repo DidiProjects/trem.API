@@ -45,8 +45,8 @@ class TestRoot:
         html = client_no_auth.get("/").text
         assert "/static/style.css?v=" in html
         assert "/static/script.js?v=" in html
-        assert "/static/account.js?v=" in html
-        assert html.index("/static/account.js") < html.index("/static/script.js")  # script.js uses its functions
+        assert "/static/credentials.js?v=" in html
+        assert html.index("/static/credentials.js") < html.index("/static/script.js")  # script.js uses its functions
 
     def test_is_hidden_from_schema(self):
         assert "/" not in app.openapi()["paths"]
@@ -75,12 +75,10 @@ class TestOpenApiSchema:
     @pytest.mark.parametrize(
         "path",
         [
-            "/auth/login",
-            "/auth/refresh",
-            "/auth/change-password",
-            "/auth/logout",
-            "/users",
-            "/users/{user_id}",
+            "/me",
+            "/me/api-keys",
+            "/admin/applications",
+            "/hub/services",
             "/pdf/split",
             "/movie/cut",
             "/audio/cut",
@@ -117,4 +115,10 @@ class TestUnknownRoutes:
         assert client_no_auth.get("/nao-existe").status_code == 404
 
     def test_wrong_method_returns_405(self, client_no_auth):
-        assert client_no_auth.get("/auth/login").status_code == 405
+        assert client_no_auth.get("/support/feedback").status_code == 405
+
+
+class TestOwnLoginIsGone:
+    @pytest.mark.parametrize("path", ["/auth/login", "/auth/refresh", "/auth/register", "/users", "/.well-known/jwks.json"])
+    def test_route_is_not_registered(self, path):
+        assert path not in app.openapi()["paths"]

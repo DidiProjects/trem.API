@@ -334,22 +334,21 @@ class TestAppOnMigratedSchema:
         return asyncio.run(go())
 
     def test_repositories_read_and_write_permission_sets(self, alembic_cfg):
-        from app.domain.schemas.user import UserCreate
+        from app.repositories.permission_repository import PermissionRepository
         from app.repositories.user_repository import UserRepository
         from app.services.api_client_service import ApiClientService
-        from app.services.user_service import UserService
 
         command.upgrade(alembic_cfg, "003")
         seed_user("editor", "file_editor")
         command.upgrade(alembic_cfg, "head")
 
         async def scenario(session):
-            existing = await UserRepository(session).get_by_username("editor")
-            created = await UserService(session).create_user(
-                UserCreate(username="scraper", permissions=["trem:ai", "trem:linkedin_scraper"])
-            )
-            sql_status = "UPDATE users SET status = 'active' WHERE username = 'scraper'"
-            await session.execute(text(sql_status))
+            users = UserRepository(session)
+            existing = await users.get_by_username("editor")
+            created = await users.create(username="scraper")
+            wanted = await PermissionRepository(session).get_by_keys(["trem:ai", "trem:linkedin_scraper"])
+            await users.replace_permissions(created.id, [p.id for p in wanted], granted_by=None)
+            created = await users.get_by_id(created.id)
             service = ApiClientService(session)
             client, raw_key = await service.create_client(
                 name="scraper-key", permissions=["trem:linkedin_scraper"], user_id=created.id
@@ -369,145 +368,27 @@ class TestAppOnMigratedSchema:
         )[0][0] == "file_editor"
 
     def test_hub_catalog_on_postgres(self, alembic_cfg):
-        from app.repositories.user_repository import UserRepository
+        from app.domain.entities.user import User
         from app.services.hub_service import HubService
 
         command.upgrade(alembic_cfg, "head")
-        uid = uuid.uuid4()
-        sql("INSERT INTO users (id, username, password_hash, status) VALUES (:id, 'ana', 'x', 'active')", id=uid)
+        reader = User(id=str(uuid.uuid4()), username="ana", email=None, created_at=None, updated_at=None,
+                      permissions=["hub:immich", "hub:jellyfin", "hub:sonarr"])
 
         async def scenario(session):
             hub = HubService(session)
             await hub.update("immich", {"url": "http://10.0.0.1:2283"})
             await hub.create("jellyfin", "Jellyfin", None, "https://tv.example", True)
             await hub.set_logo("jellyfin", PNG_LOGO)
-            admin = await UserRepository(session).get_by_id(str(uid))
-            for slug in ("immich", "jellyfin", "radarr"):
-                await hub.grant(admin, slug, str(uid))
             await hub.reorder(["jellyfin", "immich", "radarr", "sonarr", "prowlarr", "qbittorrent"])
             await hub.delete("sonarr")
-            return [s.slug for s in await hub.list_all()]
+            return [s.slug for s in await hub.list_all()], [s.slug for s in await hub.catalog(reader)]
 
-        assert self.run(scenario) == ["jellyfin", "immich", "radarr", "prowlarr", "qbittorrent"]
-        assert user_permissions(uid) == {"hub:immich", "hub:jellyfin", "hub:radarr"}
+        all_slugs, catalog = self.run(scenario)
+        assert all_slugs == ["jellyfin", "immich", "radarr", "prowlarr", "qbittorrent"]
+        assert catalog == ["jellyfin", "immich"]
         assert sql("SELECT logo_type FROM hub_services WHERE name = 'Jellyfin'")[0][0] == "image/png"
 
-    def test_login_refresh_and_reuse_on_postgres(self, alembic_cfg):
-        """The atomic claim is an UPDATE ... WHERE revoked = false: its rowcount matters on PG."""
-        from app.core.exceptions import InvalidCredentialsError
-        from app.core.security import hash_password
-        from app.services.auth_service import AuthService
-        from app.services.login_throttle import LoginThrottle
-
-        command.upgrade(alembic_cfg, "head")
-        sql(
-            "INSERT INTO users (id, username, password_hash, status, must_change_password) "
-            "VALUES (:id, 'ana', :h, 'active', false)",
-            id=uuid.uuid4(), h=hash_password("SenhaValida@123"),
-        )
-        throttle = LoginThrottle(per_username=10, per_ip=10, window_seconds=60)
-
-        async def login(session):
-            return (await AuthService(session, throttle=throttle).login("ana", "SenhaValida@123"))[1]
-
-        first = self.run(login)
-
-        async def refresh(session):
-            return (await AuthService(session, throttle=throttle).refresh(first))[1]
-
-        second = self.run(refresh)
-
-        async def reuse(session):
-            with pytest.raises(InvalidCredentialsError):
-                await AuthService(session, throttle=throttle).refresh(first)
-
-        self.run(reuse)
-        revoked = sql("SELECT revoked, replaced_by IS NOT NULL FROM refresh_tokens ORDER BY created_at")
-        assert revoked == [(True, True), (True, False)]
-        assert second
-
-
-    def test_sign_up_and_admin_lookup_on_postgres(self, alembic_cfg):
-        from app.services.rate_limit import SlidingWindowLimiter
-        from app.services.signup_service import SignupService
-
-        command.upgrade(alembic_cfg, "head")
-        admin = uuid.uuid4()
-        sql(
-            "INSERT INTO users (id, username, email, password_hash, status) "
-            "VALUES (:id, 'chefe', 'chefe@example.com', 'x', 'active')",
-            id=admin,
-        )
-        sql(
-            "INSERT INTO user_permissions (user_id, permission_id) "
-            "SELECT :u, id FROM permissions WHERE name = 'admin'",
-            u=admin,
-        )
-        sent = []
-
-        class Email:
-            def __getattr__(self, name):
-                async def send(**kwargs):
-                    sent.append((name, kwargs))
-                return send
-
-        limiter = SlidingWindowLimiter(10, 60)
-
-        async def register(session):
-            service = SignupService(session, Email(), limiter)
-            await service.register("nova", "Nova@Example.com", "cavalo bateria grampo", "1.2.3.4")
-            for send, kwargs in service.outbox:
-                await send(**kwargs)
-
-        self.run(register)
-        token = sent[0][1]["link"].split("#verify-email=", 1)[1]
-
-        async def verify(session):
-            service = SignupService(session, Email(), limiter)
-            await service.verify_email(token)
-            for send, kwargs in service.outbox:
-                await send(**kwargs)
-
-        self.run(verify)
-        assert sql("SELECT status, email FROM users WHERE username = 'nova'") == [("pending_approval", "nova@example.com")]
-        assert [k["to"] for name, k in sent if name == "send_signup_pending_approval"] == ["chefe@example.com"]
-
-    def test_totp_replay_and_recovery_codes_on_postgres(self, alembic_cfg, monkeypatch):
-        import base64
-        import secrets
-        import time
-
-        from app.core import totp
-        from app.repositories.user_repository import UserRepository
-        from app.services.mfa_service import MfaService
-        from app.services.rate_limit import SlidingWindowLimiter
-
-        command.upgrade(alembic_cfg, "head")
-        monkeypatch.setattr(get_settings(), "MFA_ENCRYPTION_KEY", base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())
-        from app.core.security import hash_password
-        uid = uuid.uuid4()
-        sql(
-            "INSERT INTO users (id, username, password_hash, status) VALUES (:id, 'ana', :h, 'active')",
-            id=uid, h=hash_password("cavalo bateria grampo"),
-        )
-        limiter = SlidingWindowLimiter(100, 60)
-
-        async def enroll(session):
-            user = await UserRepository(session).get_by_id(str(uid))
-            secret, _ = await MfaService(session, limiter).enroll(user, "cavalo bateria grampo")
-            codes = await MfaService(session, limiter).confirm(user, totp.code_at(secret, time.time()))
-            return secret, codes
-
-        secret, codes = self.run(enroll)
-        code = totp.code_at(secret, time.time() + 30)
-
-        async def check(session, **kwargs):
-            return await MfaService(session, limiter).check(str(uid), **kwargs)
-
-        assert self.run(lambda s: check(s, code=code)) is True
-        assert self.run(lambda s: check(s, code=code)) is False
-        assert self.run(lambda s: check(s, recovery_code=codes[0])) is True
-        assert self.run(lambda s: check(s, recovery_code=codes[0])) is False
 
 class TestUpgrade006:
     def test_existing_tokens_become_single_token_families_of_trem(self, alembic_cfg):
@@ -699,3 +580,61 @@ class TestUpgrade010:
                    "WHERE a.slug = 'hub'")[0][0] == 5
         command.upgrade(alembic_cfg, "010")
         assert sql("SELECT count(*) FROM hub_services")[0][0] == 5
+
+
+class TestUpgrade011:
+    """The own login leaves: its tables and the account columns go, the accounts stay."""
+
+    def _seed_at_010(self, alembic_cfg) -> uuid.UUID:
+        command.upgrade(alembic_cfg, "010")
+        uid = uuid.uuid4()
+        sql(
+            "INSERT INTO users (id, username, email, password_hash, status, must_change_password, totp_secret) "
+            "VALUES (:id, 'ana', 'ana@example.com', 'hash', 'pending_approval', true, 'secret')",
+            id=uid,
+        )
+        sql(
+            "INSERT INTO user_permissions (user_id, permission_id) "
+            "SELECT :id, p.id FROM permissions p JOIN applications a ON a.id = p.application_id "
+            "WHERE a.slug = 'trem' AND p.name = 'ai'",
+            id=uid,
+        )
+        sql(
+            "INSERT INTO refresh_tokens (user_id, token_hash, expires_at, family_id, application_id) "
+            "SELECT :id, 'h', NOW() + interval '1 day', gen_random_uuid(), id FROM applications WHERE slug = 'trem'",
+            id=uid,
+        )
+        sql("INSERT INTO mfa_recovery_codes (user_id, code_hash) VALUES (:id, 'c')", id=uid)
+        sql(
+            "INSERT INTO email_tokens (user_id, purpose, token_hash, expires_at) "
+            "VALUES (:id, 'verify_email', 't', NOW() + interval '1 day')",
+            id=uid,
+        )
+        return uid
+
+    def test_drops_the_own_login_and_keeps_the_account(self, alembic_cfg):
+        uid = self._seed_at_010(alembic_cfg)
+        command.upgrade(alembic_cfg, "011")
+
+        tables = {r[0] for r in sql("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")}
+        assert not tables & {"refresh_tokens", "email_tokens", "mfa_recovery_codes"}
+        columns = {r[0] for r in sql("SELECT column_name FROM information_schema.columns WHERE table_name = 'users'")}
+        assert not columns & {"password_hash", "status", "must_change_password", "totp_secret", "approved_by"}
+        assert sql("SELECT username, email FROM users WHERE id = :id", id=uid) == [("ana", "ana@example.com")]
+        assert user_permissions(uid) == {"trem:ai"}
+
+    def test_downgrade_brings_back_the_structure_with_active_accounts_without_password(self, alembic_cfg):
+        uid = self._seed_at_010(alembic_cfg)
+        command.upgrade(alembic_cfg, "011")
+        command.downgrade(alembic_cfg, "010")
+
+        row = sql("SELECT status, password_hash, must_change_password FROM users WHERE id = :id", id=uid)
+        assert row == [("active", "!authentik", False)]
+        assert sql("SELECT count(*) FROM refresh_tokens")[0][0] == 0
+        with pytest.raises(IntegrityError):
+            sql("INSERT INTO users (username, password_hash, status) VALUES ('x', 'h', 'superadmin')")
+
+    def test_round_trip(self, alembic_cfg):
+        command.upgrade(alembic_cfg, "head")
+        command.downgrade(alembic_cfg, "010")
+        command.upgrade(alembic_cfg, "head")

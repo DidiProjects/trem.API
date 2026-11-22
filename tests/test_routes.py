@@ -185,14 +185,6 @@ class TestPdfRoutesAuth:
         )
         assert response.status_code == 401
 
-    def test_must_change_password_blocked_returns_403(self, client_must_change, sample_pdf_bytes):
-        """Usuário com must_change_password=True não pode acessar endpoints de arquivo."""
-        response = client_must_change.post(
-            "/pdf/info",
-            files={"file": ("test.pdf", io.BytesIO(sample_pdf_bytes), "application/pdf")},
-        )
-        assert response.status_code == 403
-
     def test_wrong_profile_returns_403(self, client_airline, sample_pdf_bytes):
         """Usuário com perfil airline_company não pode acessar endpoints de arquivo."""
         response = client_airline.post(

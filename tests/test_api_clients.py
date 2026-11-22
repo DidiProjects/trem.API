@@ -284,17 +284,11 @@ class TestApiClientService:
 class TestApiClientProfileSets:
     """Several profiles per key, and keys owned by a user."""
 
-    async def _owner(self, db_session, seeded_permissions, *names, status="active"):
+    async def _owner(self, db_session, seeded_permissions, *names):
         from app.infrastructure.database.models import PermissionModel, UserModel
 
         profiles = [await db_session.get(PermissionModel, uuid.UUID(seeded_permissions[n])) for n in names]
-        orm = UserModel(
-            username=f"owner-{uuid.uuid4().hex[:6]}",
-            password_hash="x",
-            permissions=profiles,
-            status=status,
-            must_change_password=False,
-        )
+        orm = UserModel(username=f"owner-{uuid.uuid4().hex[:6]}", permissions=profiles)
         db_session.add(orm)
         await db_session.flush()
         return orm
@@ -340,18 +334,6 @@ class TestApiClientProfileSets:
             await service.create_client(name="x", permissions=["trem:ai", "trem:root", "outra:ai"])
         assert exc.value.status_code == 400
         assert "outra:ai, trem:root" in exc.value.message
-
-    async def test_blocked_owner_disables_their_keys(self, db_session, service, seeded_permissions):
-        owner = await self._owner(db_session, seeded_permissions, "trem:ai")
-        _, raw_key = await service.create_client(
-            name="k", permissions=["trem:ai"], user_id=str(owner.id)
-        )
-        assert await service.authenticate(raw_key) is not None
-
-        owner.status = "suspended"
-        await db_session.flush()
-
-        assert await service.authenticate(raw_key) is None
 
     async def test_profile_removed_from_owner_leaves_the_key_at_once(
         self, db_session, service, seeded_permissions
@@ -403,19 +385,11 @@ class TestPrincipal:
         assert p.is_user is False
         assert p.display_name == "flight-api"
 
-    def test_client_never_needs_password_change(self):
-        """Cliente não tem senha — a regra de troca não pode se aplicar a ele."""
-        assert Principal.from_client(self._client()).must_change_password is False
-
     def test_from_user(self):
         p = Principal.from_user(make_mock_user())
         assert p.kind == PrincipalKind.USER
         assert p.is_user is True
         assert p.display_name == "testuser"
-
-    def test_from_user_carries_password_flag(self):
-        p = Principal.from_user(make_mock_user(must_change_password=True))
-        assert p.must_change_password is True
 
     def test_client_repr_hides_nothing_sensitive(self):
         assert "flight-api" in repr(self._client())

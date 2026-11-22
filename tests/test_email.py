@@ -194,58 +194,6 @@ def configured_settings():
         yield settings
 
 
-class TestSmtpEmailClientProvisionalPassword:
-    async def test_sends_message(self, smtp_server, configured_settings):
-        await SmtpEmailClient().send_provisional_password(
-            to="usuario@example.com", username="joao", provisional_password="Prov@123"
-        )
-        smtp_server.send_message.assert_called_once()
-
-    async def test_addresses_the_user(self, smtp_server, configured_settings):
-        await SmtpEmailClient().send_provisional_password(
-            to="usuario@example.com", username="joao", provisional_password="Prov@123"
-        )
-        assert smtp_server.send_message.call_args[0][0]["To"] == "usuario@example.com"
-
-    async def test_body_contains_credentials(self, smtp_server, configured_settings):
-        await SmtpEmailClient().send_provisional_password(
-            to="usuario@example.com", username="joao", provisional_password="Prov@123"
-        )
-        sent = smtp_server.send_message.call_args[0][0]
-        body = sent.get_payload()[0].get_payload(decode=True).decode()
-        assert "joao" in body
-        assert "Prov@123" in body
-
-    async def test_body_links_to_the_login(self, smtp_server, configured_settings):
-        await SmtpEmailClient().send_provisional_password(
-            to="usuario@example.com", username="joao", provisional_password="Prov@123"
-        )
-        sent = smtp_server.send_message.call_args[0][0]
-        body = sent.get_payload()[0].get_payload(decode=True).decode()
-        assert f"Entrar: {configured_settings.frontend_url()}" in body
-
-    async def test_without_credentials_raises(self, smtp_server):
-        unconfigured = _settings_with(EMAIL_SMTP_USER="", EMAIL_SMTP_PASSWORD="")
-        with patch(
-            "app.infrastructure.email.smtp_client.get_settings",
-            return_value=unconfigured,
-        ):
-            with pytest.raises(EmailSendError):
-                await SmtpEmailClient().send_provisional_password(
-                    to="u@example.com", username="joao", provisional_password="Prov@123"
-                )
-
-    async def test_auth_failure_raises_email_send_error(
-        self, smtp_server, configured_settings
-    ):
-        smtp_server.login.side_effect = smtplib.SMTPAuthenticationError(535, b"bad")
-        with pytest.raises(EmailSendError) as exc:
-            await SmtpEmailClient().send_provisional_password(
-                to="u@example.com", username="joao", provisional_password="Prov@123"
-            )
-        assert exc.value.status_code == 503
-
-
 class TestSmtpEmailClientFeedback:
     async def test_sends_to_configured_recipient(self, smtp_server, configured_settings):
         await SmtpEmailClient().send_feedback("bug", "algo quebrou")
@@ -275,29 +223,7 @@ def _body(smtp_server) -> str:
     return sent.get_payload()[0].get_payload(decode=True).decode()
 
 
-class TestSmtpEmailClientSignup:
-    async def test_verification_carries_the_link(self, smtp_server, configured_settings):
-        await SmtpEmailClient().send_email_verification(
-            to="nova@example.com", username="nova", link="https://x/#verify-email=abc", ttl_hours=24
-        )
-        sent = smtp_server.send_message.call_args[0][0]
-        assert sent["To"] == "nova@example.com"
-        body = _body(smtp_server)
-        assert "https://x/#verify-email=abc" in body and "24 horas" in body
-
-    async def test_conflict_explains_only_to_the_address_owner(self, smtp_server, configured_settings):
-        await SmtpEmailClient().send_signup_conflict(to="dono@example.com", login_url="https://x")
-        assert "Já existe uma conta" in _body(smtp_server)
-
-    async def test_admin_notice_names_the_account(self, smtp_server, configured_settings):
-        await SmtpEmailClient().send_signup_pending_approval(
-            to="admin@example.com", username="nova", email="nova@example.com", user_id="u-1"
-        )
-        sent = smtp_server.send_message.call_args[0][0]
-        assert "nova" in sent["Subject"]
-        body = _body(smtp_server)
-        assert "nova@example.com" in body and "/admin/users/u-1/approve" in body
-
+class TestSmtpEmailClientDelivery:
     async def test_delivery_runs_off_the_event_loop(self, smtp_server, configured_settings):
         """smtplib bloqueia: rodando numa thread, um SMTP lento não trava as outras requisições."""
         import threading
@@ -305,5 +231,5 @@ class TestSmtpEmailClientSignup:
         loop_thread = threading.get_ident()
         seen = []
         smtp_server.send_message.side_effect = lambda msg: seen.append(threading.get_ident())
-        await SmtpEmailClient().send_signup_conflict(to="a@example.com", login_url="x")
+        await SmtpEmailClient().send_feedback("bug", "travou")
         assert seen and seen[0] != loop_thread

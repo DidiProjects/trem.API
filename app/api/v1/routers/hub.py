@@ -3,8 +3,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, Query, Response, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1.dependencies import get_current_active_user, require_admin
-from app.api.v1.routers.auth import http_error
+from app.api.v1.dependencies import get_current_user, require_admin
+from app.api.v1.errors import http_error
 from app.core.exceptions import AppException, InvalidLogoError
 from app.domain.entities.user import User
 from app.domain.schemas.common import MessageResponse
@@ -54,7 +54,7 @@ def _admin_view(service: HubServiceModel) -> HubServiceAdminResponse:
 
 
 @router.get("/services", response_model=list[HubServiceResponse])
-async def catalog(user: User = Depends(get_current_active_user), db: AsyncSession = Depends(get_db, scope="function")):
+async def catalog(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db, scope="function")):
     """The services this account may open: enabled, with an address, and granted hub:<slug>."""
     return [
         HubServiceResponse(slug=s.slug, name=s.name, description=s.description, url=s.url, logo_url=logo_path(s))
@@ -125,20 +125,3 @@ async def upload_logo(
 @admin_router.delete("/services/{slug}/logo", response_model=HubServiceAdminResponse)
 async def delete_logo(slug: str, _: User = Depends(require_admin), db: AsyncSession = Depends(get_db, scope="function")):
     return _admin_view(await _run(HubService(db).clear_logo(slug)))
-
-
-@admin_router.put("/services/{slug}/users/{user_id}", response_model=MessageResponse)
-async def grant_service(
-    slug: str, user_id: str, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db, scope="function")
-):
-    """Lets the account see the service. Its sessions go on: the catalog is read live."""
-    await _run(HubService(db).grant(admin, slug, user_id))
-    return MessageResponse(message="Acesso liberado")
-
-
-@admin_router.delete("/services/{slug}/users/{user_id}", response_model=MessageResponse)
-async def revoke_service(
-    slug: str, user_id: str, _: User = Depends(require_admin), db: AsyncSession = Depends(get_db, scope="function")
-):
-    await _run(HubService(db).revoke(slug, user_id))
-    return MessageResponse(message="Acesso removido")

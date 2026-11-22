@@ -31,8 +31,10 @@ app/
 ├── api/
 │   ├── v1/
 │   │   ├── routers/
-│   │   │   ├── auth.py          # login, refresh, change-password, logout
-│   │   │   ├── users.py         # admin: criar, habilitar, enviar senha provisória
+│   │   │   ├── me.py            # /me e as chaves do próprio usuário
+│   │   │   ├── admin.py         # aplicações e permissões
+│   │   │   ├── api_clients.py   # chaves de serviço
+│   │   │   ├── hub.py           # catálogo do trem.FRONT
 │   │   │   ├── pdf.py           # (migrado de routers/pdfRoute.py)
 │   │   │   ├── video.py
 │   │   │   ├── audio.py
@@ -46,7 +48,7 @@ app/
 │
 ├── core/
 │   ├── config.py                # Settings via pydantic-settings
-│   ├── security.py              # JWT RS256 + Argon2id + geração de senhas
+│   ├── authentik.py             # validação dos tokens do authentik (JWKS)
 │   ├── exceptions.py            # Exceções de domínio mapeadas para HTTP
 │   └── interfaces/
 │       ├── i_user_repository.py
@@ -57,13 +59,13 @@ app/
 │   │   ├── user.py              # Entidade User (pura, sem ORM)
 │   │   └── permission.py        # Application, Permission, TremPermission
 │   └── schemas/
-│       ├── auth.py              # LoginRequest, TokenResponse
-│       ├── user.py              # UserCreate, UserResponse
+│       ├── api_client.py        # chaves e /me
+│       ├── application.py       # aplicações e permissões
 │       └── common.py            # Paginação, envelopes de resposta
 │
 ├── services/
-│   ├── auth_service.py          # login, refresh, troca de senha, logout
-│   ├── user_service.py          # CRUD usuários, envio de senha provisória
+│   ├── authentik_user_service.py # conta ligada ao token do authentik, grupos gravados
+│   ├── api_client_service.py    # chaves de API
 │   ├── file/
 │   │   ├── pdf_service.py       # (mantido de services/pdfService.py)
 │   │   ├── video_service.py
@@ -129,18 +131,14 @@ CREATE TABLE permissions (
     UNIQUE (application_id, name)
 );
 
--- Usuários
+-- Pessoas que entram pelo authentik, ligadas pelo username (preferred_username).
+-- Senha, segundo fator e se a conta está ativa ficam no authentik (migration 011).
 CREATE TABLE users (
-    id                           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    username                     VARCHAR(100) UNIQUE NOT NULL,
-    email                        VARCHAR(255) UNIQUE,
-    password_hash                TEXT NOT NULL,
-    status                       VARCHAR(20) NOT NULL DEFAULT 'blocked',
-    must_change_password         BOOLEAN NOT NULL DEFAULT TRUE,
-    provisional_password_sent_at TIMESTAMPTZ,
-    created_at                   TIMESTAMPTZ DEFAULT NOW(),
-    updated_at                   TIMESTAMPTZ DEFAULT NOW(),
-    last_login_at                TIMESTAMPTZ
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    username    VARCHAR(100) UNIQUE NOT NULL,
+    email       VARCHAR(255) UNIQUE,
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Permissões de cada usuário e de cada chave: um conjunto
@@ -159,17 +157,6 @@ CREATE TABLE api_client_permissions (
 );
 -- api_clients.user_id: dono da chave (NULL = chave de serviço), ON DELETE CASCADE
 
--- Tokens de refresh (controle de sessão)
-CREATE TABLE refresh_tokens (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    token_hash  TEXT NOT NULL UNIQUE,
-    expires_at  TIMESTAMPTZ NOT NULL,
-    revoked     BOOLEAN DEFAULT FALSE,
-    created_at  TIMESTAMPTZ DEFAULT NOW(),
-    ip_address  INET,
-    user_agent  TEXT
-);
 ```
 
 ### Dados iniciais (seed via Alembic)
@@ -192,69 +179,30 @@ acesso: aplicação ou permissão nova é um registro, não uma migration.
 `users.profile_id` e `api_clients.profile_id` continuam no banco, opcionais e sem uso
 pelo código, para o downgrade da 004 devolver o perfil exato de cada linha.
 
-### Status possíveis de usuário
-
-| Status      | Significado                                      |
-|-------------|--------------------------------------------------|
-| `pending_verification` | Cadastro próprio, e-mail ainda não confirmado |
-| `pending_approval` | E-mail confirmado, aguardando o administrador |
-| `blocked`   | Padrão na criação pelo admin. Admin deve habilitar |
-| `active`    | Acesso liberado                                  |
-| `suspended` | Suspensão manual pelo administrador              |
-| `rejected`  | Cadastro recusado pelo administrador             |
-
 ---
 
 ## Autenticação — dois esquemas, uma autorização
 
-A API é consumida por **aplicações** (outras APIs, scripts, o playground) e,
-futuramente, por **usuários humanos** num front-end. Os dois obtêm credenciais
-de formas diferentes, mas passam pela mesma checagem de permissão.
-
 | Chamador | Credencial | Header |
 |----------|-----------|--------|
 | Aplicação | API key por cliente | `X-API-Key: trem_...` |
-| Usuário | JWT RS256 | `Authorization: Bearer ...` |
-| Administrador | JWT com `trem:admin` e `amr` contendo `otp` | `Authorization: Bearer ...` |
+| Pessoa | Token de acesso do authentik (trem.AUTH) | `Authorization: Bearer ...` |
+| Administrador | Token do authentik com `trem:admin` e `amr` contendo `mfa` | `Authorization: Bearer ...` |
 
-As duas primeiras são normalizadas em um `Principal` (`app/domain/entities/api_client.py`),
+As duas são normalizadas em um `Principal` (`app/domain/entities/api_client.py`),
 que é o que `require_permission()` inspeciona. As rotas não sabem — nem precisam
 saber — qual esquema foi usado.
 
-A administração (`/admin/*`, `/users`) exige uma **pessoa**: login JWT de quem tem
-`trem:admin`, feito com segundo fator (TOTP). Uma senha vazada ou uma API key não
-chegam lá. A antiga master key (`API_KEY`) não administra mais nada.
+O login das pessoas é **só o do authentik**. O token é conferido contra
+`<AUTHENTIK_ISSUER>jwks/` (RS256, `iss`, `aud` = `AUTHENTIK_AUDIENCE`, `exp`), sem
+perguntar nada ao authentik a cada chamada (`app/core/authentik.py`). A conta é achada
+pelo `preferred_username`, ou criada na primeira chamada; as permissões são os grupos do
+token com nome de permissão (`trem:*`, `hub:<slug>`) e ficam gravadas a cada chamada,
+para as chaves pessoais seguirem o authentik. Senha, segundo fator, cadastro, aprovação
+e desativação são do authentik.
 
-### Segundo fator (TOTP)
-
-- RFC 6238 (SHA-1, 6 dígitos, 30 s, um passo de tolerância), implementado em
-  `app/core/totp.py` e conferido contra os vetores da RFC.
-- Segredo de 160 bits cifrado com AES-256-GCM (`MFA_ENCRYPTION_KEY`, fora do banco), com
-  o id do usuário como dado associado: copiado para outra conta, não decifra.
-- O último passo aceito fica gravado (`totp_last_step`): o mesmo código não entra duas
-  vezes, nem em corrida (`UPDATE ... WHERE totp_last_step < :step`).
-- 10 códigos de recuperação de uso único, SHA-256 no banco, mostrados só na criação.
-- Tentativas limitadas por conta (`MFA_MAX_ATTEMPTS` por `MFA_WINDOW_SECONDS`).
-- Cadastrar, regenerar códigos ou desativar pede a senha de novo; desativar encerra
-  todas as sessões.
-
-Login com TOTP ativo é em dois passos:
-
-```
-POST /auth/login       → {"mfa_required": true, "mfa_token": "..."}   (5 min, não abre rota nenhuma)
-POST /auth/mfa/verify  {"mfa_token", "code" | "recovery_code", "session"} → tokens, amr ["pwd","otp"]
-```
-
-O `amr` fica no refresh token e passa para os tokens renovados.
-
-### Primeiro admin
-
-```bash
-docker exec -it trem-api python -m scripts.bootstrap_admin diego --email voce@example.com
-```
-
-Cria a conta ativa com `trem:admin` e senha provisória (mostrada uma vez), ou promove uma
-conta existente. Depois: trocar a senha, cadastrar o TOTP e entrar de novo com o código.
+A administração (`/admin/*`) exige uma **pessoa**: login de quem tem `trem:admin`, feito
+com segundo fator. Uma API key não chega lá.
 
 ### API keys por cliente
 
@@ -269,8 +217,9 @@ permitia revogar um consumidor sem derrubar todos nem saber quem chamou o quê.
 - Devolvida em claro **uma única vez**, na criação
 - `last_used_at` registra o uso, para auditoria e detecção de chaves esquecidas
 - Pode ter um **dono** (`user_id`). As permissões da chave precisam estar entre as do
-  dono na criação, e a cada request valem só as que o dono ainda tem: bloquear o
-  usuário ou tirar uma permissão dele vale na hora para as chaves dele. O `Principal`
+  dono na criação, e a cada request valem só as que o dono tem gravadas, que seguem o
+  authentik a cada chamada do dono. Uma conta desativada no authentik não chama mais,
+  então as chaves dela ficam com as últimas permissões até serem revogadas. O `Principal`
   carrega o `user_id`, que é a quem pertencem os recursos pessoais (jobs de
   scraping), para sobreviverem à rotação da chave. Sem dono é chave de serviço
 
@@ -284,11 +233,11 @@ python -m scripts.manage_api_clients revoke <client_id>
 
 ### Chaves do próprio usuário (`/me/api-keys`)
 
-Quem está logado (JWT; uma chave não cria chaves) gerencia as próprias:
+Quem está logado (token do authentik; uma chave não cria chaves) gerencia as próprias:
 
 | Método | Path | Descrição |
 |--------|------|-----------|
-| GET    | `/me` | Perfil, permissões, TOTP, quantas chaves ativas |
+| GET    | `/me` | Perfil, permissões, quantas chaves ativas |
 | GET    | `/me/api-keys` | Lista, sem a chave: só `key_hint` (`trem_xxxx`) |
 | POST   | `/me/api-keys` | `{name, permissions?}` → a chave completa, só nesta resposta |
 | DELETE | `/me/api-keys/{id}` | Revoga |
@@ -308,311 +257,42 @@ velho deixado pelo browser derrubaria com 401 uma chamada legítima por chave.
 
 ---
 
-## Autenticação de usuários — JWT (RS256 + Argon2id)
-
-### Tecnologias
-
-| Componente      | Tecnologia         | Motivo                                              |
-|-----------------|--------------------|-----------------------------------------------------|
-| Hash de senha   | **Argon2id**       | Vencedor do PHC, recomendado pelo OWASP             |
-| Algoritmo JWT   | **RS256**          | Assimétrico: outros serviços verificam sem a chave privada |
-| Biblioteca JWT  | **PyJWT**          | Mantida ativamente, RS256 completo; substituiu python-jose (semi-abandonada, CVE-2024-33663/33664) |
-| Refresh token   | 256 bits opacos, SHA-256 no banco | Rotação a cada uso, com detecção de reuso |
-
-### Parâmetros Argon2id (OWASP recomendado)
-
-```
-memory_cost  = 64 MB (65536 KiB)
-time_cost    = 3 iterações
-parallelism  = 4 threads
-```
-
-### Estrutura dos tokens
-
-**Access token (15 min)**, emitido para uma aplicação (`aud`), com header `kid`:
-```json
-{
-  "iss": "https://api.didilv93.com",
-  "aud": "trem",
-  "sub": "uuid-do-usuario",
-  "jti": "id-unico",
-  "username": "nome_usuario",
-  "perms": ["trem:ai", "trem:file_editor"],
-  "amr": ["pwd"],
-  "must_change_password": false,
-  "iat": 1234567890,
-  "exp": 1234567890,
-  "type": "access"
-}
-```
-
-`perms` traz só as permissões daquela aplicação: um token emitido para `financas`
-não abre a trem.API (o `aud` é conferido) nem revela o que o usuário tem em outras.
-
-**Refresh token (7 dias):** opaco, 256 bits aleatórios. O banco guarda só o SHA-256.
-
-- **Rotação**: cada `/auth/refresh` devolve um par novo e revoga o token usado, que
-  passa a apontar para o sucessor (`replaced_by`). Os tokens de um mesmo login
-  dividem a `family_id`.
-- **Detecção de reuso**: um token já trocado que volta a ser usado significa que
-  alguém tem uma cópia. A família inteira é revogada, inclusive o token mais novo
-  do dono legítimo, que precisa logar de novo. Dois refreshes simultâneos com o
-  mesmo token contam como reuso (o "claim" é um `UPDATE ... WHERE revoked = false`).
-- **Ligado à aplicação**: o refresh só emite tokens para a aplicação do login. Perder
-  todas as permissões nela, ou ser bloqueado, encerra o login no próximo refresh.
-- **Logout** encerra o login inteiro (a família), não só o token apresentado.
-
-### Verificação por outras aplicações (JWKS)
-
-`GET /.well-known/jwks.json` publica a chave pública de assinatura. Outra aplicação
-valida o token localmente, sem chamar a trem.API: assinatura RS256 pela chave do
-`kid`, `iss` igual ao da trem.API, `aud` igual ao próprio slug, `exp`. O `kid` é o
-thumbprint RFC 7638 da chave.
-
-Troca de chave sem derrubar ninguém: a chave antiga vai para `JWT_EXTRA_PUBLIC_KEYS`
-(separadas por `|||`) enquanto seus tokens vivem (15 min), e sai depois.
-
-### Sessão do navegador
-
-Com `"session": "cookie"` no login, o refresh vai num cookie `trem_refresh`
-`HttpOnly; Secure; SameSite=None; Partitioned; Path=/auth`, fora do alcance do
-JavaScript, e o access token fica só em memória. Os fronts ficam em outros domínios e
-chamam a API direto: o cookie precisa viajar entre sites, e `Partitioned` (CHIPS) o
-guarda separado por site do front, aceito pelo Chrome e pelo Firefox mesmo onde
-bloqueiam cookie de terceiro. `/auth/refresh` e `/auth/logout` sem corpo leem o cookie
-e exigem o header `X-Requested-With: trem`: um formulário de outro site não envia header
-próprio, e um `fetch` que envie passa por preflight, que o CORS só aprova para
-`CORS_ORIGINS`. Ao gravar o cookie, a API expira o antigo `SameSite=Strict` sem
-partição: enviado junto, o token já rotacionado contaria como reuso. Em HTTP local
-(`COOKIE_SECURE=false`) o cookie segue `SameSite=Strict`, sem partição.
-
-Sem `session`, o refresh volta no corpo (aplicações, scripts, outros fronts).
-
-### Página (`/`)
-
-`app/static/account.js` cuida da sessão e da aba Account; `script.js` faz todas as
-chamadas por `authFetch`. A API key digitada no campo tem prioridade sobre o login (quem
-cola uma chave logado quer testar aquela chave); sem chave, vai o Bearer da sessão, e um
-401 da sessão dispara um refresh e uma nova tentativa. A aba Account usa `sessionFetch`,
-sempre com o login: `/me` e `/auth` não aceitam API key. Ao lado do campo, a página diz
-qual credencial está em uso.
-
-- A API key fica só no campo: não é gravada em `localStorage` nem `sessionStorage`, e
-  some ao recarregar. A cópia que versões anteriores deixavam no `localStorage` é apagada
-  ao carregar.
-
-- Access token só em memória; refresh no cookie HttpOnly (`session: "cookie"`). Uma flag
-  sem segredo no `localStorage` diz se vale tentar restaurar a sessão ao carregar.
-- Refreshes serializados entre abas com Web Locks: duas abas reapresentando o mesmo
-  cookie disparariam a detecção de reuso e encerrariam o login. Logout é avisado às
-  outras abas por `BroadcastChannel`.
-- Links de confirmação (`#verify-email=`) e de redefinição de senha (`#reset-password=`)
-  saem da barra de endereço e do histórico ao carregar; o de redefinição fica só em
-  memória até a senha nova ser enviada.
-- Chave nova e códigos de recuperação aparecem num diálogo que é esvaziado ao fechar.
-- O segredo TOTP aparece como texto e link `otpauth:`, sem QR code: nenhum script de
-  terceiros numa página que manipula segredos.
-
-### Sessão do banco
-
-`get_db` é sempre `Depends(get_db, scope="function")`: o commit acontece antes de a
-resposta sair. No escopo padrão do FastAPI 0.141 ("request") ele rodava depois, e um
-cliente que agia logo após um 2xx podia não encontrar o dado gravado.
-
-### Limite de tentativas de login
-
-Em memória (processo único), janela deslizante de `LOGIN_FAILURE_WINDOW_SECONDS` (15 min):
-`LOGIN_MAX_FAILURES_PER_USERNAME` (5) por username e `LOGIN_MAX_FAILURES_PER_IP` (20) por IP.
-Acima disso, 429 com `Retry-After`. O username conta mesmo quando não existe, para o
-bloqueio não revelar quais contas existem; pelo mesmo motivo, login de usuário
-inexistente roda uma verificação Argon2id contra um hash descartável e leva o mesmo
-tempo que uma senha errada. O IP vem de `CF-Connecting-IP`, que o Cloudflare
-sobrescreve; o primeiro item do `X-Forwarded-For` é escolhido pelo cliente.
-
----
-
-## Cadastro pelo próprio usuário
-
-```
-1. POST /auth/register {username, email, password}
-   → conta pending_verification, sem permissões; resposta 202 sempre igual
-   → e-mail com link {FRONTEND_URL}/#verify-email=<token> (256 bits, uso único, 24 h)
-
-2. POST /auth/verify-email {token}
-   → status pending_approval, email_verified_at preenchido
-   → e-mail para os admins (usuários ativos com trem:admin) e para ADMIN_EMAIL
-     (ou EMAIL_RECIPIENT), que cobre o tempo antes de existir o primeiro admin
-
-3. Admin aprova e define as permissões (API de admin)
-```
-
-- **Username é público, e-mail não**: o formulário confere o nome enquanto ele é
-  digitado (`GET /auth/username-available?username=`, sem login, `{available}`), e o
-  cadastro com nome já usado dá 409. Um nome aparece para outras pessoas e o login já
-  limita tentativas por nome; esconder custava um cadastro inteiro de ida e volta pela
-  caixa de entrada. O e-mail continua sem enumeração: já usado recebe a mesma resposta
-  202, e quem fica sabendo é só o dono do endereço, por e-mail. A senha é hasheada antes
-  de qualquer consulta, e os e-mails saem numa background task depois da resposta, então
-  o tempo também não muda.
-- **Token no fragmento** (`#`): não vai para log do nginx nem para o `Referer`.
-- **Cadastro abandonado** (não confirmado em `EMAIL_TOKEN_TTL_HOURS`) não segura o
-  username nem o e-mail: um novo cadastro apaga a conta pendente.
-- **Reenvio**: `POST /auth/resend-verification {email}` invalida os links anteriores.
-- **Limites**: `SIGNUP_MAX_PER_IP` (5) cadastros por IP por `SIGNUP_WINDOW_SECONDS` (1 h);
-  o reenvio conta por IP e por e-mail; a conferência do username,
-  `USERNAME_CHECK_MAX_PER_IP` (60) por `USERNAME_CHECK_WINDOW_SECONDS` (5 min).
-  `SIGNUP_ENABLED=false` fecha o cadastro.
-- **Login** de conta pendente diz o motivo (e-mail não confirmado, aguardando
-  aprovação) só depois da senha certa.
-- **Senha**: mínimo 12, máximo 128, sem regra de composição (NIST SP 800-63B); não pode
-  conter o username nem o e-mail, nem ser quase toda o mesmo caractere. Vale também
-  para a troca de senha.
-- **Senha vazada**: cadastro, troca e redefinição consultam o Have I Been Pwned pela API
-  de range (k-anonimidade): sai do servidor só o prefixo de 5 caracteres do SHA-1, com
-  `Add-Padding`, e a comparação do sufixo é local. Achou, 422. Se o serviço não responde
-  em `PWNED_PASSWORDS_TIMEOUT` (3 s), a senha é aceita: uma queda de terceiro não trava
-  cadastro nem redefinição. `PWNED_PASSWORDS_ENABLED=false` desliga. Na troca, a consulta
-  só acontece depois de a senha atual ser conferida.
-
-## Esqueci a senha
-
-```
-1. POST /auth/forgot-password {email}
-   → 202 sempre igual; só conta active recebe o link
-   → e-mail com link {FRONTEND_URL}/#reset-password=<token> (256 bits, uso único, 60 min)
-
-2. POST /auth/reset-password {token, new_password}
-   → senha trocada, must_change_password=False
-   → todos os refresh tokens revogados, bloqueio de login zerado
-   → e-mail avisando o dono da conta
-```
-
-- Mesma tabela `email_tokens` do cadastro, `purpose='reset_password'`. Um pedido novo
-  invalida os links anteriores.
-- Conta pendente, suspensa, recusada ou bloqueada não recebe link: a pendente tem o
-  próprio link de confirmação, e as outras dependem do admin.
-- A política de senha (inclusive username e e-mail da conta) é checada **antes** de
-  gastar o token: senha recusada não queima o link.
-- **TOTP continua valendo**: o e-mail prova a caixa de entrada, não o segundo fator.
-- Limite: o mesmo `SIGNUP_MAX_PER_IP` por `SIGNUP_WINDOW_SECONDS`, contado por IP e por
-  e-mail. `PASSWORD_RESET_TTL_MINUTES` (60) controla a validade.
-- API keys do usuário continuam ativas: elas têm revogação própria em `/me/api-keys`.
-
-## Fluxo Completo de Cadastro e Primeiro Acesso
-
-```
-1. Admin → POST /users
-   → cria usuário com status='blocked', must_change_password=True
-   → sem senha definida ainda
-
-2. Admin → POST /users/{id}/send-provisional-password
-   → gera senha segura aleatória (14 chars: upper+lower+digit+special)
-   → armazena hash Argon2id no banco
-   → registra provisional_password_sent_at = agora
-   → envia email com a senha em texto puro
-
-3. Admin → [UPDATE users SET status='active' WHERE id=?]
-   → habilitação manual no banco (por enquanto)
-
-4. Usuário → POST /auth/login
-   → valida username + senha
-   → verifica status = 'active' (se bloqueado → 403)
-   → retorna access_token (15min) + refresh_token (7 dias)
-   → payload do access_token inclui must_change_password=true
-
-5. Qualquer endpoint protegido (exceto /auth/change-password)
-   → middleware detecta must_change_password=true → 403
-
-6. Usuário → POST /auth/change-password
-   → valida senha atual
-   → armazena novo hash Argon2id
-   → must_change_password = false
-   → revoga todos os refresh_tokens anteriores
-   → emite novos tokens
-
-7. Usuário acessa endpoints conforme as permissões
-```
-
----
-
 ## Endpoints da API
 
-### Auth (`/auth`)
-
-| Método | Path                    | Auth       | Descrição                        |
-|--------|-------------------------|------------|----------------------------------|
-| POST   | `/auth/login`           | Público    | Login; `audience` (padrão `trem`) e `session` (`body` ou `cookie`) |
-| POST   | `/auth/refresh`         | Refresh    | Novo par de tokens (corpo ou cookie + `X-Requested-With`) |
-| POST   | `/auth/change-password` | Bearer     | Altera senha (obrigatório no 1º acesso) |
-| POST   | `/auth/logout`          | Refresh    | Encerra o login (corpo ou cookie + `X-Requested-With`) |
-| GET    | `/.well-known/jwks.json`| Público    | Chaves públicas para validar os tokens |
-
-### Users (`/users`) — Admin
-
-| Método | Path                                     | Auth     | Descrição                       |
-|--------|------------------------------------------|----------|---------------------------------|
-| POST   | `/users`                                 | Admin    | Cria novo usuário               |
-| GET    | `/users`                                 | Admin    | Lista usuários (paginado)       |
-| GET    | `/users/{id}`                            | Admin    | Detalha usuário                 |
-| POST   | `/users/{id}/send-provisional-password`  | Admin    | Envia senha provisória por email|
-
-### Administração (`/admin`) — admin com TOTP
+### Administração (`/admin`) — admin com segundo fator
 
 | Método | Path | Descrição |
 |--------|------|-----------|
-| GET    | `/admin/users?status=pending_approval` | Lista, com filtro de status |
-| GET    | `/admin/users/{id}` | Detalha |
-| POST   | `/admin/users/{id}/approve` | `{"permissions": [...]}`: ativa com exatamente essas |
-| POST   | `/admin/users/{id}/reject` | Recusa o cadastro |
-| POST   | `/admin/users/{id}/suspend` | Bloqueia, encerra sessões, para as API keys do dono |
-| POST   | `/admin/users/{id}/reactivate` | Volta de suspensa para ativa |
-| PUT    | `/admin/users/{id}/permissions` | Substitui o conjunto e encerra as sessões |
 | GET/POST | `/admin/applications` | Lista (com permissões) / cria `{slug, name}` |
 | DELETE | `/admin/applications/{slug}` | Remove, com permissões, concessões e sessões |
 | POST   | `/admin/applications/{slug}/permissions` | Cria `{name}` |
 | DELETE | `/admin/applications/{slug}/permissions/{name}` | Remove |
 
-Proteções: o admin não muda o estado da própria conta nem tira o próprio `trem:admin`;
-a aplicação `trem` e suas permissões (usadas pelo código) não podem ser removidas.
-Trocar permissões encerra as sessões porque os access tokens carregam as permissões
-que as outras aplicações leem; os já emitidos valem até expirar (15 min).
+Proteção: a aplicação `trem` e suas permissões (usadas pelo código) não podem ser
+removidas.
 
 ### Catálogo do trem.FRONT (`/hub`, `/admin/hub`)
 
 Tabela `hub_services`: nome, descrição, endereço, ativo, ordem e logo (bytes no banco,
 tipo lido dos bytes: PNG, WebP ou SVG, até 256 KB). Cada serviço pertence a uma permissão
 `hub:<slug>` (FK com `ON DELETE CASCADE`): criar o serviço cria a permissão, removê-lo
-remove a permissão e as concessões.
+remove a permissão. Quem vê o serviço é quem está no grupo `hub:<slug>` do authentik.
 
 | Método | Path | Descrição |
 |--------|------|-----------|
-| GET    | `/hub/services` | Serviços da conta logada: ativos, com endereço e concedidos |
+| GET    | `/hub/services` | Serviços da conta logada: ativos, com endereço e nos grupos dela |
 | GET    | `/hub/services/{slug}/logo?v=` | Público, para `<img>`; `v` (hash) torna a URL imutável |
 | GET/POST | `/admin/hub/services` | Lista todos / cria com a permissão |
 | PATCH  | `/admin/hub/services/{slug}` | Só os campos enviados |
 | PUT    | `/admin/hub/services/order` | Nova ordem, com todos os serviços |
-| DELETE | `/admin/hub/services/{slug}` | Remove com permissão e concessões |
+| DELETE | `/admin/hub/services/{slug}` | Remove com a permissão (o grupo fica no authentik) |
 | PUT/DELETE | `/admin/hub/services/{slug}/logo` | Envia (multipart `file`) / remove |
-| PUT/DELETE | `/admin/hub/services/{slug}/users/{id}` | Libera / tira o acesso da conta |
 
-Liberar ou tirar um serviço **não** encerra sessões, ao contrário de
-`PUT /admin/users/{id}/permissions`: o catálogo é lido do banco a cada visita e `hub:*`
-não vai em token da `trem`. O SVG é servido com CSP `sandbox` e `nosniff`: aberto direto
+O SVG é servido com CSP `sandbox` e `nosniff`: aberto direto
 não executa nada, e dentro de `<img>` o navegador já não executaria. A migration 010 traz
 os cinco serviços iniciais com logo e sem endereço (fora do catálogo até o admin preencher).
 
-### MFA (`/auth/mfa`) — usuário logado
-
-| Método | Path | Descrição |
-|--------|------|-----------|
-| POST | `/auth/mfa/enroll` | `{password}` → `{secret, otpauth_uri}` (ainda inativo) |
-| POST | `/auth/mfa/confirm` | `{code}` → ativa e devolve os códigos de recuperação |
-| POST | `/auth/mfa/recovery-codes` | `{password, code}` → novo conjunto |
-| POST | `/auth/mfa/disable` | `{password, code}` → desativa e encerra as sessões |
-| POST | `/auth/mfa/verify` | Segundo passo do login |
-
-`POST /users` recebe `permissions` (lista de chaves `<aplicação>:<permissão>`, ao menos
-uma). `POST /admin/clients` recebe `permissions` e, opcionalmente, `user_id` do dono.
+`POST /admin/clients` recebe `permissions` e, opcionalmente, `user_id` do dono.
 Os antigos `profile_name` e `profile_names` respondem 422.
 
 ### Arquivos — permissão `trem:file_editor`
@@ -795,30 +475,12 @@ services:
 | Web Framework       | FastAPI               |
 | ORM + Async         | SQLAlchemy 2.x async  |
 | Migrações           | Alembic               |
-| Hash de senha       | argon2-cffi (Argon2id)|
-| JWT                 | PyJWT[crypto]         |
+| JWT (authentik)     | PyJWT[crypto]         |
 | Config segura       | pydantic-settings     |
 | Cliente HTTP        | httpx                 |
 | DB admin web        | Adminer (Docker)      |
 | Rate limiting       | slowapi               |
 | Driver async PG     | asyncpg               |
-
----
-
-## Geração das Chaves RS256
-
-Execute uma vez para gerar o par de chaves:
-
-```bash
-python scripts/generate_keys.py
-```
-
-O script gera `private_key.pem` e `public_key.pem`. Copie o conteúdo para o `.env`:
-
-```
-JWT_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----"
-JWT_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"
-```
 
 ---
 
@@ -829,7 +491,7 @@ JWT_PUBLIC_KEY="-----BEGIN PUBLIC KEY-----\n...\n-----END PUBLIC KEY-----"
 | 1    | Estrutura de diretórios + ARCHITECTURE.md                        | ✅     |
 | 2    | Interfaces abstratas (`core/interfaces/`)                         | ✅     |
 | 3    | PostgreSQL: modelos ORM + Alembic + primeira migration            | ✅     |
-| 4    | Autenticação: Argon2id + JWT RS256 + fluxo completo              | ✅     |
+| 4    | Autenticação: Argon2id + JWT RS256 + fluxo completo (trocada pelo authentik na 011) | ✅     |
 | 5    | CRUD de usuários + fluxo de senha provisória                     | ✅     |
 | 6    | Migrar routers existentes para JWT + permissões                  | ✅     |
 | 7    | Cliente HTTP para API aérea                                       | ✅     |
