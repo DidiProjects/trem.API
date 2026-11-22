@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     # (keys come from <issuer>jwks/). Empty: only API keys are accepted.
     AUTHENTIK_ISSUER: str = ""
     AUTHENTIK_AUDIENCE: str = "trem"
+    # Shared with trem.AUTH's account webhook (POST /internal/authentik/accounts). Empty: the
+    # route answers 404 and a disabled account's API keys keep their last permissions.
+    AUTHENTIK_WEBHOOK_SECRET: str = ""
 
     # PostgreSQL (asyncpg)
     DATABASE_URL: str = "postgresql+asyncpg://trem:trem@localhost:5432/trem"

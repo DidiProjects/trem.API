@@ -14,6 +14,10 @@ from app.repositories.user_repository import UserRepository
 _PERMISSION = re.compile(r"^[a-z0-9_-]+:[a-z0-9_.-]+$")
 
 
+def _permissions_of(groups) -> list[str]:
+    return sorted({g for g in groups or () if isinstance(g, str) and _PERMISSION.match(g)})
+
+
 class AuthentikUserService:
     def __init__(self, session: AsyncSession):
         self._session = session
@@ -34,14 +38,26 @@ class AuthentikUserService:
         user = await self._users.get_by_username(username) or await self._create(username, claims.get("email"))
         stored = set(user.permissions)
 
-        groups = claims.get("groups") or []
-        user.permissions = sorted({g for g in groups if isinstance(g, str) and _PERMISSION.match(g)})
+        user.permissions = _permissions_of(claims.get("groups"))
         await self._store(user.id, stored, user.permissions)
         amr = {m for m in claims.get("amr") or () if isinstance(m, str)}
         if amr & {"mfa", "otp"}:
             amr.add("otp")
         user.amr = tuple(sorted(amr))
         return user
+
+    async def sync_account(self, username: str, active: bool, groups) -> list[str] | None:
+        """
+        authentik changed an account (trem.AUTH account-events.yaml). Disabled: its stored
+        permissions go, so its personal API keys stop at once; enabled again, they follow its
+        groups. An account trem.API never saw is left alone. Returns what is now stored.
+        """
+        user = await self._users.get_by_username(username)
+        if user is None:
+            return None
+        wanted = _permissions_of(groups) if active else []
+        await self._store(user.id, set(user.permissions), wanted)
+        return sorted((await self._users.get_by_id(user.id)).permissions)
 
     async def _store(self, user_id, stored: set[str], wanted: list[str]) -> None:
         """
