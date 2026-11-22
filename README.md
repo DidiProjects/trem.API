@@ -95,8 +95,11 @@ app/
   administration. Passwords, second factor, sign-up, approval and disabling an account all
   live in authentik.
 - **Programs** use per-client API keys (`X-API-Key: trem_...`), 256-bit, stored as SHA-256.
-  A personal key is capped by its owner's stored permissions. An account disabled in
-  authentik makes no more calls, so its keys keep the last permissions until revoked.
+  A personal key is capped by its owner's stored permissions. When authentik disables an
+  account, trem.AUTH tells trem.API (`POST /internal/authentik/accounts`, `Authorization:
+  Bearer <AUTHENTIK_WEBHOOK_SECRET>`, hidden from the OpenAPI): its stored permissions go, so
+  its keys stop at once; enabled again, they follow its groups. A deleted account carries no
+  username in authentik's event: disable before deleting.
 
 ## Requirements
 

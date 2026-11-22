@@ -161,6 +161,7 @@ jobs:
             -e API_PORT="${{ vars.API_PORT }}" \
             -e API_URL="${{ vars.API_URL }}" \
             -e AUTHENTIK_ISSUER="${{ vars.AUTHENTIK_ISSUER }}" \
+            -e AUTHENTIK_WEBHOOK_SECRET="${{ secrets.AUTHENTIK_WEBHOOK_SECRET }}" \
             -e CORS_ORIGINS="${{ vars.CORS_ORIGINS }}" \
             -e UPLOAD_DIR=/tmp/uploads \
             -e MAX_FILE_SIZE=52428800 \
