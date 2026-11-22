@@ -3,9 +3,9 @@ Builds postman/collections/trem-api.json from the app's OpenAPI, so every route 
 
     python -m scripts.build_postman_collection
 
-The environments in postman/environments hold baseUrl, username, password, audience and
-apiKey. Login, MFA verify and refresh store the tokens in collection variables; every
-request sends the Bearer, plus X-API-Key when apiKey is set (the API prefers the key).
+The environments in postman/environments hold baseUrl, accessToken (an access token
+authentik issued to the trem client) and apiKey. Every request sends the Bearer, plus
+X-API-Key when apiKey is set (the API prefers the key).
 tests/test_postman_collection.py fails when this file is out of date with the routes.
 """
 import json
@@ -17,19 +17,11 @@ SCHEMA = "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 
 FOLDERS = [
     ("Health", lambda p: p == "/health"),
-    ("Auth", lambda p: p in {"/auth/login", "/auth/mfa/verify", "/auth/refresh", "/auth/logout",
-                             "/auth/change-password", "/.well-known/jwks.json"}),
-    ("Sign-up and password reset", lambda p: p in {"/auth/username-available", "/auth/register", "/auth/verify-email",
-                                                   "/auth/resend-verification", "/auth/forgot-password",
-                                                   "/auth/reset-password"}),
-    ("Two-factor (TOTP)", lambda p: p.startswith("/auth/mfa/")),
     ("Me", lambda p: p.startswith("/me")),
-    ("Admin: users", lambda p: p.startswith("/admin/users")),
     ("Admin: applications and permissions", lambda p: p.startswith("/admin/applications")),
     ("Admin: API clients", lambda p: p.startswith("/admin/clients")),
     ("Hub catalog", lambda p: p.startswith("/hub/")),
     ("Admin: hub catalog", lambda p: p.startswith("/admin/hub/")),
-    ("Users (legacy admin)", lambda p: p.startswith("/users")),
     ("PDF", lambda p: p.startswith("/pdf/")),
     ("Image", lambda p: p.startswith("/image/")),
     ("Movies", lambda p: p.startswith("/movie/")),
@@ -39,63 +31,22 @@ FOLDERS = [
     ("Support", lambda p: p.startswith("/support/")),
 ]
 
-PUBLIC = {
-    "/health", "/.well-known/jwks.json", "/auth/login", "/auth/mfa/verify", "/auth/refresh",
-    "/auth/logout", "/auth/username-available", "/auth/register", "/auth/verify-email", "/auth/resend-verification",
-    "/auth/forgot-password", "/auth/reset-password", "/hub/services/{slug}/logo",
-}
+PUBLIC = {"/health", "/hub/services/{slug}/logo"}
 
-# Field values that come from the environment or from an earlier response.
-FIELD_VALUES = {
-    "username": "{{username}}",
-    "password": "{{password}}",
-    "current_password": "{{password}}",
-    "audience": "{{audience}}",
-    "refresh_token": "{{refreshToken}}",
-    "mfa_token": "{{mfaToken}}",
-    "session": "body",
-}
+FIELD_VALUES: dict = {}
 
 BODY_OVERRIDES = {
     ("POST", "/llm/v1/chat/completions"): {"messages": [{"role": "user", "content": "Olá!"}]},
     ("POST", "/llm/jobs"): {"messages": [{"role": "user", "content": "Olá!"}]},
-    ("POST", "/auth/mfa/verify"): {"mfa_token": "{{mfaToken}}", "code": "", "session": "body"},
 }
 
-SAVE_TOKENS = [
-    "const json = pm.response.json();",
-    "if (json.mfa_required) {",
-    "    pm.collectionVariables.set('mfaToken', json.mfa_token);",
-    "    console.log('TOTP on: send the code with POST /auth/mfa/verify');",
-    "}",
-    "if (json.access_token) {",
-    "    pm.collectionVariables.set('accessToken', json.access_token);",
-    "    pm.collectionVariables.set('refreshToken', json.refresh_token);",
-    "    pm.collectionVariables.unset('mfaToken');",
-    "    console.log('Tokens saved');",
-    "}",
-]
-
-CLEAR_TOKENS = [
-    "if (pm.response.code === 200) {",
-    "    pm.collectionVariables.unset('accessToken');",
-    "    pm.collectionVariables.unset('refreshToken');",
-    "    console.log('Tokens cleared');",
-    "}",
-]
-
-TEST_SCRIPTS = {
-    ("POST", "/auth/login"): SAVE_TOKENS,
-    ("POST", "/auth/mfa/verify"): SAVE_TOKENS,
-    ("POST", "/auth/refresh"): SAVE_TOKENS,
-    ("POST", "/auth/logout"): CLEAR_TOKENS,
-}
+TEST_SCRIPTS: dict = {}
 
 # Sends the API key when the environment has one; the account routes take only the login.
 PRE_REQUEST = [
     "const apiKey = pm.environment.get('apiKey') || pm.collectionVariables.get('apiKey');",
     "const path = '/' + pm.request.url.getPath(true).replace(/^\\/+/, '');",
-    "const accountRoute = /^\\/(auth|me|admin|users)(\\/|$)/.test(path);",
+    "const accountRoute = /^\\/(me|admin)(\\/|$)/.test(path);",
     "if (apiKey && !accountRoute) {",
     "    pm.request.headers.upsert({ key: 'X-API-Key', value: apiKey });",
     "}",
@@ -104,15 +55,13 @@ PRE_REQUEST = [
 DESCRIPTION = """trem.API — https://api.didilv93.com
 
 1. Import this collection and one environment from postman/environments.
-2. In the environment, fill username and password (and apiKey, optionally).
-3. Run Auth › POST /auth/login. With TOTP on, it stores mfaToken: put the code in
-   POST /auth/mfa/verify. The access and refresh tokens are stored as collection variables.
+2. For the tools, fill apiKey: a personal key from trem (Minha conta > Chaves).
+3. For /me and the admin routes, fill accessToken with an access token authentik issued to
+   the trem client (it lasts 10 minutes). Keys cannot reach those routes.
 4. Every request sends Authorization: Bearer {{accessToken}}. When apiKey is set, the tool
    routes also send X-API-Key, which the API prefers over the login.
-5. The access token lasts 15 minutes: POST /auth/refresh renews it. Each refresh returns a
-   new refresh token and kills the old one; the script keeps the newest.
 
-Admin routes need a login with trem:admin proven with TOTP.
+Admin routes need a login with trem:admin proven with the second factor.
 
 Generated by scripts/build_postman_collection.py from the OpenAPI; regenerate it after
 changing routes."""
@@ -263,11 +212,7 @@ def build(openapi: dict) -> dict:
 
     return {
         "info": {"name": "trem.API", "description": DESCRIPTION, "schema": SCHEMA},
-        "variable": [
-            {"key": "accessToken", "value": ""},
-            {"key": "refreshToken", "value": ""},
-            {"key": "mfaToken", "value": ""},
-        ],
+        "variable": [{"key": "accessToken", "value": ""}],
         "auth": {"type": "bearer", "bearer": [{"key": "token", "value": "{{accessToken}}", "type": "string"}]},
         "event": [{"listen": "prerequest", "script": {"type": "text/javascript", "exec": PRE_REQUEST}}],
         "item": [{"name": name, "item": items} for name, items in folders.items() if items],

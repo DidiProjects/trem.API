@@ -14,36 +14,6 @@ logger = logging.getLogger(__name__)
 
 class SmtpEmailClient(IEmailClient):
 
-    async def send_provisional_password(
-        self,
-        to: str,
-        username: str,
-        provisional_password: str,
-    ) -> None:
-        settings = get_settings()
-        subject = "[trem.API] Seu acesso foi criado"
-        body = f"""
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Bem-vindo(a) ao trem.API
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Olá, {username}!
-
-Seu acesso foi criado. Use as credenciais abaixo para fazer login:
-
-  Usuário: {username}
-  Senha:   {provisional_password}
-
-⚠️  Você será obrigado(a) a alterar sua senha no primeiro acesso.
-
-Entrar: {settings.frontend_url()}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Mensagem automática — não responda este email
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-"""
-        await self._send(to=to, subject=subject, body=body)
-
     async def send_feedback(
         self,
         feedback_type: str,
@@ -83,70 +53,6 @@ Enviado automaticamente via trem.API
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
         await self._send(to=recipient, subject=f"[trem.API] {label}", body=body)
-
-    async def send_email_verification(self, to: str, username: str, link: str, ttl_hours: int) -> None:
-        body = f"""Olá, {username}!
-
-Recebemos um cadastro no trem.API com este e-mail. Para confirmar, abra:
-
-{link}
-
-O link vale por {ttl_hours} horas e funciona uma vez. Depois da confirmação, o
-cadastro segue para aprovação do administrador.
-
-Se não foi você, ignore esta mensagem: sem a confirmação, nenhuma conta é ativada.
-"""
-        await self._send(to=to, subject="[trem.API] Confirme seu e-mail", body=body)
-
-    async def send_signup_conflict(self, to: str, login_url: str) -> None:
-        """Answers a sign-up with an e-mail that already has an account, without telling the requester."""
-        body = f"""Recebemos um pedido de cadastro no trem.API com este e-mail.
-
-Já existe uma conta com este e-mail. Se esqueceu a senha, use "Esqueci a senha" na tela de login.
-
-Entrar: {login_url}
-
-Se não foi você, ignore esta mensagem.
-"""
-        await self._send(to=to, subject="[trem.API] Pedido de cadastro", body=body)
-
-    async def send_signup_pending_approval(self, to: str, username: str, email: str, user_id: str) -> None:
-        body = f"""Novo cadastro aguardando aprovação no trem.API.
-
-  Usuário: {username}
-  E-mail:  {email} (confirmado)
-  ID:      {user_id}
-
-Aprove e defina as permissões em POST /admin/users/{user_id}/approve,
-ou recuse em POST /admin/users/{user_id}/reject.
-"""
-        await self._send(to=to, subject=f"[trem.API] Cadastro pendente: {username}", body=body)
-
-    async def send_password_reset(self, to: str, username: str, link: str, ttl_minutes: int) -> None:
-        body = f"""Olá, {username}!
-
-Recebemos um pedido para redefinir a senha da sua conta no trem.API. Para criar
-uma senha nova, abra:
-
-{link}
-
-O link vale por {ttl_minutes} minutos e funciona uma vez. Se a conta usa
-autenticação em dois fatores, o código continua sendo pedido no login.
-
-Se não foi você, ignore esta mensagem: a senha atual continua valendo.
-"""
-        await self._send(to=to, subject="[trem.API] Redefinição de senha", body=body)
-
-    async def send_password_changed(self, to: str, username: str) -> None:
-        body = f"""Olá, {username}!
-
-A senha da sua conta no trem.API foi redefinida, e todas as sessões abertas
-foram encerradas. As suas API keys continuam ativas.
-
-Se não foi você, redefina a senha agora pela opção "Esqueci a senha" e avise o
-administrador.
-"""
-        await self._send(to=to, subject="[trem.API] Sua senha foi alterada", body=body)
 
     async def _send(self, to: str, subject: str, body: str) -> None:
         # smtplib blocks: off the event loop, a slow SMTP server does not stall every request.

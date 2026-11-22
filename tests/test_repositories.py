@@ -5,27 +5,17 @@ Diferente do resto da suíte, aqui nada é mockado: exercita o SQL de verdade,
 os defaults dos modelos e o mapeamento ORM -> entidade de domínio.
 """
 import uuid
-from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from app.domain.entities.permission import TremPermission
-from app.domain.entities.user import User, UserStatus
+from app.domain.entities.user import User
 from app.repositories.user_repository import UserRepository, _as_uuid
 
 
 @pytest.fixture
 def repo(db_session):
     return UserRepository(db_session)
-
-
-async def _make_user(repo, seeded_permissions, username="novo", email="novo@example.com"):
-    return await repo.create(
-        username=username,
-        password_hash="$argon2id$hash",
-        permission_ids=[seeded_permissions[TremPermission.FILE_EDITOR.value]],
-        email=email,
-    )
 
 
 class TestAsUuidHelper:
@@ -45,58 +35,18 @@ class TestAsUuidHelper:
 
 
 class TestCreate:
-    async def test_returns_domain_entity(self, repo, seeded_permissions):
-        user = await _make_user(repo, seeded_permissions)
+    async def test_returns_domain_entity_without_permissions(self, repo, seeded_permissions):
+        user = await repo.create(username="novo", email="novo@example.com")
         assert isinstance(user, User)
-        assert user.username == "novo"
-        assert user.email == "novo@example.com"
-
-    async def test_resolves_permissions(self, repo, seeded_permissions):
-        user = await _make_user(repo, seeded_permissions)
-        assert user.permissions == [TremPermission.FILE_EDITOR.value]
-
-    async def test_several_profiles_come_back_sorted(self, repo, seeded_permissions):
-        user = await repo.create(
-            username="varios",
-            password_hash="$argon2id$hash",
-            permission_ids=[
-                seeded_permissions[TremPermission.LINKEDIN_SCRAPER.value],
-                seeded_permissions[TremPermission.AI.value],
-            ],
-        )
-        assert user.permissions == [TremPermission.AI.value, TremPermission.LINKEDIN_SCRAPER.value]
-        found = await repo.get_by_username("varios")
-        assert found.permissions == user.permissions
-
-    async def test_defaults_to_blocked_and_must_change_password(self, repo, seeded_permissions):
-        """Conta nasce bloqueada — o admin habilita depois."""
-        user = await _make_user(repo, seeded_permissions)
-        assert user.status == UserStatus.BLOCKED
-        assert user.must_change_password is True
-        assert user.is_active is False
+        assert (user.username, user.email, user.permissions) == ("novo", "novo@example.com", [])
 
     async def test_generates_id_and_timestamps(self, repo, seeded_permissions):
-        user = await _make_user(repo, seeded_permissions)
+        user = await repo.create(username="novo")
         assert uuid.UUID(user.id)
-        assert user.created_at is not None
-        assert user.updated_at is not None
-        assert user.last_login_at is None
+        assert user.created_at is not None and user.updated_at is not None
 
     async def test_email_is_optional(self, repo, seeded_permissions):
-        user = await repo.create(
-            username="sememail",
-            password_hash="$argon2id$hash",
-            permission_ids=[seeded_permissions[TremPermission.FILE_EDITOR.value]],
-        )
-        assert user.email is None
-
-    async def test_accepts_airline_profile(self, repo, seeded_permissions):
-        user = await repo.create(
-            username="cia",
-            password_hash="$argon2id$hash",
-            permission_ids=[seeded_permissions[TremPermission.AIRLINE_COMPANY.value]],
-        )
-        assert user.permissions == [TremPermission.AIRLINE_COMPANY.value]
+        assert (await repo.create(username="sememail")).email is None
 
 
 class TestGetById:
@@ -130,90 +80,26 @@ class TestGetByUsername:
         assert await repo.get_by_username("PERSISTED") is None
 
 
-class TestUpdatePassword:
-    async def test_changes_hash_and_clears_flag(self, repo, persisted_user):
-        await repo.update_password(str(persisted_user.id), "$argon2id$novo", False)
-        updated = await repo.get_by_id(str(persisted_user.id))
-        assert updated.password_hash == "$argon2id$novo"
-        assert updated.must_change_password is False
+class TestGetByEmail:
+    async def test_ignores_case(self, repo, persisted_user):
+        found = await repo.get_by_email("PERSISTED@example.com")
+        assert found is not None and found.username == "persisted"
 
-    async def test_can_set_must_change_password(self, repo, persisted_user):
-        await repo.update_password(str(persisted_user.id), "$argon2id$prov", True)
-        updated = await repo.get_by_id(str(persisted_user.id))
-        assert updated.must_change_password is True
-
-    async def test_unknown_id_is_a_noop(self, repo, persisted_user):
-        await repo.update_password(str(uuid.uuid4()), "$argon2id$x", False)
-        unchanged = await repo.get_by_id(str(persisted_user.id))
-        assert unchanged.password_hash == "$argon2id$placeholder"
+    async def test_returns_none_for_unknown_email(self, repo, persisted_user):
+        assert await repo.get_by_email("ninguem@example.com") is None
 
 
-class TestUpdateStatus:
-    @pytest.mark.parametrize(
-        "status",
-        [UserStatus.ACTIVE, UserStatus.BLOCKED, UserStatus.SUSPENDED],
-    )
-    async def test_sets_each_valid_status(self, repo, persisted_user, status):
-        await repo.update_status(str(persisted_user.id), status.value)
-        updated = await repo.get_by_id(str(persisted_user.id))
-        assert updated.status == status
+class TestReplacePermissions:
+    async def test_replaces_the_set_and_the_lookups_see_it(self, repo, persisted_user, seeded_permissions):
+        wanted = [seeded_permissions[TremPermission.AI.value], seeded_permissions[TremPermission.LINKEDIN_SCRAPER.value]]
+        await repo.replace_permissions(str(persisted_user.id), wanted, granted_by=None)
 
-    async def test_blocking_flips_is_active(self, repo, persisted_user):
-        await repo.update_status(str(persisted_user.id), UserStatus.BLOCKED.value)
-        updated = await repo.get_by_id(str(persisted_user.id))
-        assert updated.is_active is False
-        assert updated.is_blocked is True
+        found = await repo.get_by_id(str(persisted_user.id))
+        assert found.permissions == [TremPermission.AI.value, TremPermission.LINKEDIN_SCRAPER.value]
 
-
-class TestUpdateLastLogin:
-    async def test_records_timestamp(self, repo, persisted_user):
-        moment = datetime.now(timezone.utc)
-        await repo.update_last_login(str(persisted_user.id), moment)
-        updated = await repo.get_by_id(str(persisted_user.id))
-        assert updated.last_login_at is not None
-
-
-class TestSetProvisionalPasswordSent:
-    async def test_records_timestamp(self, repo, persisted_user):
-        assert (await repo.get_by_id(str(persisted_user.id))).provisional_password_sent_at is None
-
-        await repo.set_provisional_password_sent(
-            str(persisted_user.id), datetime.now(timezone.utc)
-        )
-        updated = await repo.get_by_id(str(persisted_user.id))
-        assert updated.provisional_password_sent_at is not None
-
-
-class TestListAndCount:
-    async def test_lists_created_users(self, repo, seeded_permissions):
-        for i in range(3):
-            await _make_user(repo, seeded_permissions, f"user{i}", f"user{i}@example.com")
-        assert len(await repo.list_all()) == 3
-
-    async def test_respects_limit(self, repo, seeded_permissions):
-        for i in range(5):
-            await _make_user(repo, seeded_permissions, f"user{i}", f"user{i}@example.com")
-        assert len(await repo.list_all(limit=2)) == 2
-
-    async def test_respects_offset(self, repo, seeded_permissions):
-        for i in range(5):
-            await _make_user(repo, seeded_permissions, f"user{i}", f"user{i}@example.com")
-        assert len(await repo.list_all(limit=10, offset=3)) == 2
-
-    async def test_empty_table_returns_empty_list(self, repo, seeded_permissions):
-        assert await repo.list_all() == []
-
-    async def test_count_all_ignores_pagination(self, repo, seeded_permissions):
-        """count_all é o total da tabela — é o que alimenta PaginatedResponse.total."""
-        for i in range(7):
-            await _make_user(repo, seeded_permissions, f"user{i}", f"user{i}@example.com")
-
-        page = await repo.list_all(limit=2, offset=0)
-        assert len(page) == 2
-        assert await repo.count_all() == 7
-
-    async def test_count_all_on_empty_table(self, repo, seeded_permissions):
-        assert await repo.count_all() == 0
+    async def test_empty_set_removes_every_permission(self, repo, persisted_user):
+        await repo.replace_permissions(str(persisted_user.id), [], granted_by=None)
+        assert (await repo.get_by_id(str(persisted_user.id))).permissions == []
 
 
 class TestPermissionRepository:
@@ -247,87 +133,3 @@ class TestPermissionRepository:
     async def test_finds_by_ids(self, permissions, seeded_permissions):
         found = await permissions.get_by_ids([seeded_permissions["trem:ai"], "nao-e-uuid"])
         assert [p.key for p in found] == ["trem:ai"]
-
-
-class TestRefreshTokens:
-    async def _create(self, repo, user, token_hash="hash-1", **kwargs):
-        params = {
-            "user_id": str(user.id),
-            "token_hash": token_hash,
-            "expires_at": datetime.now(timezone.utc) + timedelta(days=7),
-            "application_id": user.permissions[0].application_id,
-        }
-        params.update(kwargs)
-        return await repo.create_refresh_token(**params)
-
-    async def test_create_and_fetch(self, repo, persisted_user):
-        await self._create(repo, persisted_user)
-        stored = await repo.get_refresh_token("hash-1")
-        assert stored is not None
-        assert stored.revoked is False
-
-    async def test_stores_ip_and_user_agent(self, repo, persisted_user):
-        await self._create(
-            repo, persisted_user, ip_address="203.0.113.42", user_agent="pytest/1.0"
-        )
-        stored = await repo.get_refresh_token("hash-1")
-        assert stored.ip_address == "203.0.113.42"
-        assert stored.user_agent == "pytest/1.0"
-
-    async def test_unknown_hash_returns_none(self, repo, persisted_user):
-        assert await repo.get_refresh_token("nao-existe") is None
-
-    async def test_first_token_starts_its_own_family(self, repo, persisted_user):
-        token = await self._create(repo, persisted_user)
-        assert token.family_id == token.id
-        assert (await repo.get_refresh_token("hash-1")).application.slug == "trem"
-
-    async def test_claim_succeeds_once(self, repo, persisted_user):
-        token = await self._create(repo, persisted_user)
-        assert await repo.claim_refresh_token(token.id) is True
-        assert await repo.claim_refresh_token(token.id) is False
-        assert (await repo.get_refresh_token("hash-1")).revoked is True
-
-    async def test_successor_and_family_revocation(self, repo, persisted_user):
-        first = await self._create(repo, persisted_user, "hash-a")
-        second = await self._create(repo, persisted_user, "hash-b", family_id=first.family_id)
-        other = await self._create(repo, persisted_user, "hash-c")
-
-        await repo.set_refresh_token_successor(first.id, second.id)
-        await repo.revoke_refresh_token_family(first.family_id)
-
-        assert (await repo.get_refresh_token("hash-a")).replaced_by == second.id
-        assert (await repo.get_refresh_token("hash-b")).revoked is True
-        assert (await repo.get_refresh_token("hash-c")).revoked is False
-        assert other.family_id != first.family_id
-
-    async def test_revoke_all_for_user(self, repo, persisted_user):
-        for h in ("hash-a", "hash-b", "hash-c"):
-            await self._create(repo, persisted_user, h)
-
-        await repo.revoke_all_refresh_tokens(str(persisted_user.id))
-
-        for h in ("hash-a", "hash-b", "hash-c"):
-            assert (await repo.get_refresh_token(h)).revoked is True
-
-    async def test_revoke_all_does_not_touch_other_users(
-        self, repo, persisted_user, seeded_permissions
-    ):
-        other = await _make_user(repo, seeded_permissions, "outro", "outro@example.com")
-        await self._create(repo, persisted_user, "hash-do-persisted")
-        await repo.create_refresh_token(
-            user_id=other.id,
-            token_hash="hash-do-outro",
-            expires_at=datetime.now(timezone.utc) + timedelta(days=7),
-            application_id=persisted_user.permissions[0].application_id,
-        )
-
-        await repo.revoke_all_refresh_tokens(str(persisted_user.id))
-
-        assert (await repo.get_refresh_token("hash-do-persisted")).revoked is True
-        assert (await repo.get_refresh_token("hash-do-outro")).revoked is False
-
-    async def test_revoking_unknown_family_is_a_noop(self, repo, persisted_user):
-        await self._create(repo, persisted_user, "hash-a")
-        await repo.revoke_refresh_token_family(uuid.uuid4())
-        assert (await repo.get_refresh_token("hash-a")).revoked is False

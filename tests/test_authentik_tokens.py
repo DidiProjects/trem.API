@@ -1,4 +1,4 @@
-"""Bearer tokens from authentik (trem.AUTH) next to trem.API's own, against the suite's SQLite."""
+"""Bearer tokens from authentik (trem.AUTH), the only login, against the suite's SQLite."""
 import time
 import urllib.error
 from types import SimpleNamespace
@@ -12,12 +12,10 @@ from sqlalchemy import select
 
 from app.core import authentik
 from app.core.config import get_settings
-from app.core.security import create_access_token, hash_password, verify_password
 from app.infrastructure.database.connection import get_db
 from app.infrastructure.database.models import UserModel
 from app.main import app
 from app.services.api_client_service import ApiClientService
-from app.services.authentik_user_service import NO_LOCAL_PASSWORD
 
 ISSUER = "https://auth.example/application/o/trem/"
 _key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -81,10 +79,7 @@ class TestAuthentikToken:
         assert body["username"] == "ana" and body["email"] == "ana@example.com"
         # Only groups named like permissions; "authentik Admins" means nothing here.
         assert body["permissions"] == ["hub:didiflix", "trem:ai"]
-        assert body["must_change_password"] is False
-        [user] = await _users(ctx.session)
-        assert user.status == "active" and user.password_hash == NO_LOCAL_PASSWORD
-        assert not verify_password("", user.password_hash) and not verify_password(NO_LOCAL_PASSWORD, user.password_hash)
+        assert len(await _users(ctx.session)) == 1
 
     async def test_later_calls_reuse_the_account_and_follow_the_groups(self, ctx):
         first = http(token()).get("/me").json()
@@ -112,8 +107,7 @@ class TestAuthentikToken:
         assert (await ApiClientService(ctx.session).authenticate(key)).permissions == ["trem:ai"]
 
     async def test_links_an_existing_trem_account_by_username(self, ctx):
-        ctx.session.add(UserModel(username="ana", email="old@example.com", password_hash=hash_password("x"),
-                                  status="active", must_change_password=False))
+        ctx.session.add(UserModel(username="ana", email="old@example.com"))
         await ctx.session.commit()
 
         body = http(token()).get("/me").json()
@@ -122,16 +116,8 @@ class TestAuthentikToken:
         assert body["permissions"] == ["hub:didiflix", "trem:ai"]
         assert len(await _users(ctx.session)) == 1
 
-    async def test_a_blocked_trem_account_stays_blocked(self, ctx):
-        ctx.session.add(UserModel(username="ana", email="ana@example.com", password_hash=hash_password("x"),
-                                  status="blocked", must_change_password=False))
-        await ctx.session.commit()
-
-        assert http(token()).get("/me").status_code == 403
-
     async def test_an_e_mail_taken_by_another_account_is_left_out(self, ctx):
-        ctx.session.add(UserModel(username="outra", email="ana@example.com", password_hash=hash_password("x"),
-                                  status="active", must_change_password=False))
+        ctx.session.add(UserModel(username="outra", email="ana@example.com"))
         await ctx.session.commit()
 
         body = http(token()).get("/me").json()
@@ -167,24 +153,14 @@ class TestAuthentikToken:
         assert http(token()).get("/me").status_code == 503
 
     async def test_second_factor_counts_for_administration(self, ctx):
-        without = http(token(groups=["trem:admin"])).get("/admin/users")
-        with_mfa = http(token(groups=["trem:admin"], amr=["pwd", "mfa"])).get("/admin/users")
+        without = http(token(groups=["trem:admin"])).get("/admin/applications")
+        with_mfa = http(token(groups=["trem:admin"], amr=["pwd", "mfa"])).get("/admin/applications")
 
         assert without.status_code == 403 and "segundo fator" in without.json()["detail"]
         assert with_mfa.status_code == 200, with_mfa.text
 
-    async def test_trem_own_tokens_still_work(self, ctx):
-        ctx.session.add(UserModel(username="bia", email="bia@example.com", password_hash=hash_password("x"),
-                                  status="active", must_change_password=False))
-        await ctx.session.commit()
-        bia = (await _users(ctx.session))[0]
 
-        response = http(create_access_token(str(bia.id), "bia", [], False)).get("/me")
-
-        assert response.status_code == 200 and response.json()["username"] == "bia"
-
-
-async def test_without_the_setting_authentik_tokens_are_not_trusted(db_session, seeded_permissions, monkeypatch):
+async def test_without_the_setting_no_bearer_is_trusted(db_session, seeded_permissions, monkeypatch):
     monkeypatch.setattr(get_settings(), "AUTHENTIK_ISSUER", "")
 
     async def _db():
@@ -195,14 +171,6 @@ async def test_without_the_setting_authentik_tokens_are_not_trusted(db_session, 
         assert http(token()).get("/me").status_code == 401
     finally:
         app.dependency_overrides.clear()
-
-
-def test_is_authentik_token_reads_only_the_issuer(monkeypatch):
-    monkeypatch.setattr(get_settings(), "AUTHENTIK_ISSUER", ISSUER)
-
-    assert authentik.is_authentik_token(token())
-    assert not authentik.is_authentik_token(token(iss="https://elsewhere/"))
-    assert not authentik.is_authentik_token("not-a-jwt")
 
 
 def test_jwks_are_fetched_with_trem_api_user_agent(monkeypatch):

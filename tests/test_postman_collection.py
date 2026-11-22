@@ -40,4 +40,4 @@ def test_environments_carry_no_values_for_secrets():
     for env_file in (ROOT / "postman" / "environments").glob("*.json"):
         values = {v["key"]: v["value"] for v in json.loads(env_file.read_text(encoding="utf-8"))["values"]}
         assert values["baseUrl"]
-        assert values["password"] == "" and values["apiKey"] == "" and values["username"] == ""
+        assert values["accessToken"] == "" and values["apiKey"] == ""

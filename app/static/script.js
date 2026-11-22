@@ -4,7 +4,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     await loadConfig();
     
     setupMainTabs();
-    await initAccount();
+    initCredentials();
     setupFormHandlers();
     setupAiChat();
     setupScrapers();
@@ -69,7 +69,7 @@ function toggleApiKeyVisibility() {
 
 function requireCredential() {
     if (hasCredential()) return true;
-    showToast('Log in or enter an API key', 'error');
+    showToast('Enter an API key', 'error');
     return false;
 }
 
@@ -647,7 +647,7 @@ const AI_STATUS_LABELS = {
     warming_up: 'waking up',
     offline: 'offline',
     unauthorized: 'invalid API key',
-    nokey: 'log in or enter an API key'
+    nokey: 'enter an API key'
 };
 
 function setupAiChat() {
@@ -1249,7 +1249,7 @@ function setupScrapers() {
 }
 
 async function scrFetch(path, options = {}) {
-    if (!hasCredential()) throw new Error('Log in, or enter an API key, with the trem:linkedin_scraper permission');
+    if (!hasCredential()) throw new Error('Enter an API key with the trem:linkedin_scraper permission');
     let response;
     try {
         response = await authFetch(SCR_BASE + path, options);
@@ -1278,7 +1278,7 @@ async function scrErrorMessage(response) {
 async function scrLoad() {
     if (!hasCredential()) {
         scrRenderSession(null);
-        scrRenderJobs([], 'Log in, or enter an API key, with the trem:linkedin_scraper permission to see your jobs.');
+        scrRenderJobs([], 'Enter an API key with the trem:linkedin_scraper permission to see your jobs.');
         return;
     }
     try {

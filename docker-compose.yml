@@ -14,13 +14,11 @@ services:
     ports:
       - "3002:3002"
     environment:
-      - API_KEY=${API_KEY}
       - API_URL=${API_URL}
+      # Login (authentik, trem.AUTH): the trem provider's issuer
+      - AUTHENTIK_ISSUER=${AUTHENTIK_ISSUER:-}
       - UPLOAD_DIR=/tmp/uploads
       - MAX_FILE_SIZE=52428800
-      # JWT RS256
-      - JWT_PRIVATE_KEY=${JWT_PRIVATE_KEY}
-      - JWT_PUBLIC_KEY=${JWT_PUBLIC_KEY}
       # Banco
       - DATABASE_URL=postgresql+asyncpg://trem:${POSTGRES_PASSWORD}@postgres:5432/trem
       # Email

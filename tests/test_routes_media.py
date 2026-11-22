@@ -90,17 +90,6 @@ class TestMovieCut:
         )
         assert response.status_code == 403
 
-    def test_blocked_while_password_change_pending(self, client_must_change):
-        response = client_must_change.post(
-            "/movie/cut", files=_upload("filme.mp4"), data={"start": 0, "end": 5}
-        )
-        assert response.status_code == 403
-
-
-# ---------------------------------------------------------------------------
-# /audio
-# ---------------------------------------------------------------------------
-
 class TestAudioCut:
     def test_success_returns_audio(self, client):
         with patch("app.routers.audioRoute.cut_audio"):
@@ -452,8 +441,3 @@ class TestSupportFeedback:
             )
         assert response.status_code == 200
 
-    def test_blocked_while_password_change_pending(self, client_must_change):
-        response = client_must_change.post(
-            "/support/feedback", data={"type": "bug", "message": "texto"}
-        )
-        assert response.status_code == 403
