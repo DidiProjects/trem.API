@@ -16,6 +16,7 @@ from app.core.security import create_access_token, hash_password, verify_passwor
 from app.infrastructure.database.connection import get_db
 from app.infrastructure.database.models import UserModel
 from app.main import app
+from app.services.api_client_service import ApiClientService
 from app.services.authentik_user_service import NO_LOCAL_PASSWORD
 
 ISSUER = "https://auth.example/application/o/trem/"
@@ -92,6 +93,23 @@ class TestAuthentikToken:
         assert second["id"] == first["id"]
         assert second["permissions"] == ["trem:file_editor"]
         assert len(await _users(ctx.session)) == 1
+
+    async def test_the_token_groups_are_stored_for_the_personal_api_keys(self, ctx):
+        created = http(token(groups=["trem:ai", "trem:file_editor", "hub:unregistered"])).post(
+            "/me/api-keys", json={"name": "script", "permissions": ["trem:ai", "trem:file_editor"]}
+        )
+        assert created.status_code == 201, created.text
+        key = created.json()["api_key"]
+        [user] = await _users(ctx.session)
+        await ctx.session.refresh(user, ["permissions"])
+        assert sorted(p.key for p in user.permissions) == ["trem:ai", "trem:file_editor"]
+        assert (await ApiClientService(ctx.session).authenticate(key)).permissions == ["trem:ai", "trem:file_editor"]
+
+        # Out of a group in authentik: the key loses it with the owner's next call.
+        http(token(groups=["trem:ai"])).get("/me")
+        await ctx.session.refresh(user, ["permissions"])
+        assert [p.key for p in user.permissions] == ["trem:ai"]
+        assert (await ApiClientService(ctx.session).authenticate(key)).permissions == ["trem:ai"]
 
     async def test_links_an_existing_trem_account_by_username(self, ctx):
         ctx.session.add(UserModel(username="ana", email="old@example.com", password_hash=hash_password("x"),
