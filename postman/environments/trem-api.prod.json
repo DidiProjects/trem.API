@@ -2,9 +2,7 @@
   "name": "trem.API — prod",
   "values": [
     { "key": "baseUrl", "value": "https://api.didilv93.com", "enabled": true },
-    { "key": "username", "value": "", "enabled": true },
-    { "key": "password", "value": "", "type": "secret", "enabled": true },
-    { "key": "audience", "value": "trem", "enabled": true },
+    { "key": "accessToken", "value": "", "type": "secret", "enabled": true },
     { "key": "apiKey", "value": "", "type": "secret", "enabled": true }
   ],
   "_postman_variable_scope": "environment"
