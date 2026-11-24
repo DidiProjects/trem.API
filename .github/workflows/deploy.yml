@@ -44,7 +44,7 @@ jobs:
           python -m pip install --upgrade pip
           # torch CPU-only primeiro: a suite nao toca no whisper (o import e lazy),
           # e o wheel com CUDA sao ~4 GB de download inutil no runner.
-          pip install --index-url https://download.pytorch.org/whl/cpu torch
+          pip install --index-url https://download.pytorch.org/whl/cpu torch==2.15.0
           pip install -r requirements-dev.txt
 
       - name: Run tests
